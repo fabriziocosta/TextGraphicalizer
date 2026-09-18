@@ -49,8 +49,8 @@ class FakeBackend:
         return False
 
 
-class FakeBertBackend:
-    def __init__(self, model_id="bert-base-uncased", device="auto"):
+class FakeNliBackend:
+    def __init__(self, model_id="cross-encoder/nli-distilroberta-base", device="auto"):
         self.model_id = model_id
         self.device = device
 
@@ -74,8 +74,8 @@ def fitted(monkeypatch, **params):
         lambda self: FakeBackend(),
     )
     monkeypatch.setattr(
-        "textgraphicalizer.transformer.BertGroundingBackend.load",
-        lambda self: FakeBertBackend(self.model_id, self.device),
+        "textgraphicalizer.transformer.NliGroundingBackend.load",
+        lambda self: FakeNliBackend(self.model_id, self.device),
     )
     return TextGraphicalizer(ONTOLOGY, **params).load_model()
 
@@ -89,8 +89,8 @@ def test_init_loads_model_automatically(monkeypatch):
 
     monkeypatch.setattr("textgraphicalizer.transformer.LayaBackend.load", load)
     monkeypatch.setattr(
-        "textgraphicalizer.transformer.BertGroundingBackend.load",
-        lambda self: FakeBertBackend(self.model_id, self.device),
+        "textgraphicalizer.transformer.NliGroundingBackend.load",
+        lambda self: FakeNliBackend(self.model_id, self.device),
     )
     estimator = TextGraphicalizer(ONTOLOGY).fit()
     assert len(calls) == 1
@@ -106,8 +106,8 @@ def test_load_model_remains_idempotent_after_automatic_loading(monkeypatch):
 
     monkeypatch.setattr("textgraphicalizer.transformer.LayaBackend.load", load)
     monkeypatch.setattr(
-        "textgraphicalizer.transformer.BertGroundingBackend.load",
-        lambda self: FakeBertBackend(self.model_id, self.device),
+        "textgraphicalizer.transformer.NliGroundingBackend.load",
+        lambda self: FakeNliBackend(self.model_id, self.device),
     )
     estimator = TextGraphicalizer(ONTOLOGY)
     assert estimator.load_model() is estimator
@@ -117,24 +117,24 @@ def test_load_model_remains_idempotent_after_automatic_loading(monkeypatch):
 
 def test_grounding_model_loads_automatically_and_remains_idempotent(monkeypatch):
     laya_calls = []
-    bert_calls = []
+    nli_calls = []
 
     def load_laya(self):
         laya_calls.append(self)
         return FakeBackend()
 
     def load_bert(self):
-        bert_calls.append(self)
-        return FakeBertBackend(self.model_id, self.device)
+        nli_calls.append(self)
+        return FakeNliBackend(self.model_id, self.device)
 
     monkeypatch.setattr("textgraphicalizer.transformer.LayaBackend.load", load_laya)
-    monkeypatch.setattr("textgraphicalizer.transformer.BertGroundingBackend.load", load_bert)
+    monkeypatch.setattr("textgraphicalizer.transformer.NliGroundingBackend.load", load_bert)
     estimator = TextGraphicalizer(ONTOLOGY)
 
     assert estimator.load_model() is estimator
     assert estimator.load_model() is estimator
     assert len(laya_calls) == 1
-    assert len(bert_calls) == 1
+    assert len(nli_calls) == 1
 
 
 def test_fit_preserves_an_already_loaded_model(monkeypatch):
@@ -146,8 +146,8 @@ def test_fit_preserves_an_already_loaded_model(monkeypatch):
 
     monkeypatch.setattr("textgraphicalizer.transformer.LayaBackend.load", load)
     monkeypatch.setattr(
-        "textgraphicalizer.transformer.BertGroundingBackend.load",
-        lambda self: FakeBertBackend(self.model_id, self.device),
+        "textgraphicalizer.transformer.NliGroundingBackend.load",
+        lambda self: FakeNliBackend(self.model_id, self.device),
     )
     estimator = TextGraphicalizer(ONTOLOGY).load_model()
     backend = estimator.backend_
@@ -166,8 +166,8 @@ def test_fit_transform_loads_model_once(monkeypatch):
 
     monkeypatch.setattr("textgraphicalizer.transformer.LayaBackend.load", load)
     monkeypatch.setattr(
-        "textgraphicalizer.transformer.BertGroundingBackend.load",
-        lambda self: FakeBertBackend(self.model_id, self.device),
+        "textgraphicalizer.transformer.NliGroundingBackend.load",
+        lambda self: FakeNliBackend(self.model_id, self.device),
     )
     estimator = TextGraphicalizer(ONTOLOGY)
 
@@ -199,8 +199,8 @@ def test_load_model_can_be_called_without_fit(monkeypatch):
         lambda self: FakeBackend(),
     )
     monkeypatch.setattr(
-        "textgraphicalizer.transformer.BertGroundingBackend.load",
-        lambda self: FakeBertBackend(self.model_id, self.device),
+        "textgraphicalizer.transformer.NliGroundingBackend.load",
+        lambda self: FakeNliBackend(self.model_id, self.device),
     )
     estimator = TextGraphicalizer(ONTOLOGY).load_model()
     graph = estimator.transform("A causes B.")
@@ -219,7 +219,7 @@ def test_transform_returns_graph_with_evidence(monkeypatch):
     assert graph.graph["input_truncated"] is False
 
 
-def test_grounding_uses_bert_cosine_scoring(monkeypatch):
+def test_grounding_uses_nli_entailment_scoring(monkeypatch):
     estimator = fitted(monkeypatch)
     graph = estimator.transform("The infection caused a fever.")
 
@@ -227,8 +227,8 @@ def test_grounding_uses_bert_cosine_scoring(monkeypatch):
     assert graph.nodes["b"]["word"] == "infection"
     assert graph.edges["a", "b"]["word"] == "infection"
     assert graph.graph["grounding_candidate_words"] == ["infection", "caused", "fever"]
-    assert graph.graph["grounding_method"] == "bert_cosine"
-    assert graph.graph["grounding_model_id"] == "bert-base-uncased"
+    assert graph.graph["grounding_method"] == "nli_entailment"
+    assert graph.graph["grounding_model_id"] == "cross-encoder/nli-distilroberta-base"
     assert graph.nodes["a"]["word_score"] == pytest.approx(0.9)
 
 
@@ -269,8 +269,8 @@ def test_relation_questions_are_domain_filtered(monkeypatch):
         lambda self: FakeBackend(),
     )
     monkeypatch.setattr(
-        "textgraphicalizer.transformer.BertGroundingBackend.load",
-        lambda self: FakeBertBackend(self.model_id, self.device),
+        "textgraphicalizer.transformer.NliGroundingBackend.load",
+        lambda self: FakeNliBackend(self.model_id, self.device),
     )
     estimator = TextGraphicalizer(ontology).load_model()
     graph = estimator.transform("A causes B.")

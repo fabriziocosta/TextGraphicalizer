@@ -19,7 +19,7 @@ python -m pip install -e ".[notebook]"
 python -m ipykernel install --user --name py312 --display-name "py312"
 ```
 
-Constructing `TextGraphicalizer` initializes Laya and the BERT grounding model;
+Constructing `TextGraphicalizer` initializes Laya and the NLI grounding model;
 this may download both checkpoints into the standard Hugging Face cache.
 `.load_model()` remains available and idempotent. The model weights are not
 stored in this repository. To run offline, pass a previously downloaded Laya
@@ -70,7 +70,7 @@ from textgraphicalizer import TextGraphicalizer
 extractor = TextGraphicalizer(
     ontology="ontology.yaml",
     stopwords_path="stopwords.yaml",
-    grounding_model_id="bert-base-uncased",
+    grounding_model_id="cross-encoder/nli-distilroberta-base",
     connected=False,
 )
 graph = extractor.fit_transform("An infection caused the patient to develop a fever.")
@@ -97,15 +97,15 @@ full Laya sequence for every node and relation question, including question
 instructions, relation options, special tokens, and the configured 512-token
 budget—not against the paragraph token count alone.
 
-For candidate nodes and selected edges, TextGraphicalizer uses contextual BERT
-embeddings. It encodes each non-stopword candidate in the complete paragraph,
-encodes each ontology concept or relation description, and assigns the word
-with the highest cosine similarity. Long paragraphs are encoded with
-overlapping BERT windows. Stopwords are removed from this choice set using
+For candidate nodes and selected edges, TextGraphicalizer uses an NLI
+cross-encoder. It tests hypotheses such as “the word `drought` directly refers
+to the concept `State`” against the complete paragraph and assigns the word
+with the highest entailment probability. Long paragraphs are evaluated with
+overlapping context windows. Stopwords are removed from this choice set using
 [`stopwords.yaml`](stopwords.yaml); supply `stopwords_path=...` to use another
 YAML file. The result is stored as `word`, `word_index`, and `word_score` on
 the corresponding node or edge. Set `grounding_model_id=...` to use another
-Hugging Face BERT checkpoint.
+Hugging Face NLI checkpoint.
 The checked-in default is derived from the [Snowball English stopword
 list](https://snowballstem.org/algorithms/english/stop.txt).
 

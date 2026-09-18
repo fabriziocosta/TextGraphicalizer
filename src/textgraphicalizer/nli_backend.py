@@ -6,8 +6,6 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-import numpy as np
-
 
 class NliGroundingBackend:
     """Score word/concept hypotheses with an NLI-fine-tuned encoder."""

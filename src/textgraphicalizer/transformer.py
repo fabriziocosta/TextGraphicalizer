@@ -142,7 +142,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             if word.casefold() not in self.stopwords_
         ]
 
-    def _node_words_by_bert(
+    def _node_words_by_nli(
         self,
         text: str,
         words: Sequence[tuple[int, str]],
@@ -153,9 +153,9 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         if not words or graph.number_of_nodes() == 0 or not concepts_by_node:
             return {}
         scores = self.grounding_backend_.score_words(text, words, concepts_by_node)
-        return self._best_bert_words(scores)
+        return self._best_nli_words(scores)
 
-    def _edge_words_by_bert(
+    def _edge_words_by_nli(
         self,
         text: str,
         words: Sequence[tuple[int, str]],
@@ -166,10 +166,10 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         if not words or graph.number_of_edges() == 0 or not relations_by_edge:
             return {}
         scores = self.grounding_backend_.score_words(text, words, relations_by_edge)
-        return self._best_bert_words(scores)
+        return self._best_nli_words(scores)
 
     @staticmethod
-    def _best_bert_words(
+    def _best_nli_words(
         scores: Mapping[Any, Sequence[tuple[int, str, float]]],
     ) -> dict[Any, dict[str, Any]]:
         """Choose the highest cosine-scoring candidate for each target."""
@@ -389,7 +389,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             for node in graph.nodes
             if node in concept_by_id
         }
-        node_words = self._node_words_by_bert(
+        node_words = self._node_words_by_nli(
             text,
             content_words,
             graph,
@@ -408,7 +408,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             for source, target, data in graph.edges(data=True)
             if data.get("label") in relation_by_label
         }
-        edge_words = self._edge_words_by_bert(
+        edge_words = self._edge_words_by_nli(
             text,
             content_words,
             graph,
@@ -434,7 +434,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                 ),
                 "stopwords_count": len(self.stopwords_),
                 "grounding_candidate_words": [word for _, word in content_words],
-                "grounding_method": "bert_cosine",
+                "grounding_method": "nli_entailment",
                 "grounding_model_id": self.grounding_model_id,
                 "input_truncated": self.backend_.was_truncated(
                     text,
