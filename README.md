@@ -50,7 +50,9 @@ relations:
 
 Relations may optionally specify `source_concepts` and `target_concepts`.
 The span grounder uses the ontology label and description directly, so no
-handwritten grounding vocabulary is required.
+handwritten grounding vocabulary is required. Optional single-word
+`grounding_terms` act as lexical anchors when a generic longer span receives a
+higher raw STS score.
 
 ## Initial WordNet ontology
 

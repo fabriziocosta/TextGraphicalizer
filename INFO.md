@@ -93,6 +93,47 @@ the winning span contains one word, the legacy `word`, `word_index`, and
 `word_score` attributes are populated as well. The graph metadata records the
 grounding method, model id, candidate spans, and diagnostic shortlist size.
 
+### How BART-style span selection works
+
+The selection process is sometimes described as “BART-style” span selection
+because it asks a pretrained language model to evaluate a marked piece of
+text in context. The current implementation does **not** use a BART generator:
+its default checkpoint is the encoder-only STS model
+`cross-encoder/stsb-distilroberta-base`. It generates no text and does not
+predict a start token and end token directly.
+
+For one graph item, the process is:
+
+1. Build the concept query from the ontology label and description.
+2. Tokenize the paragraph into ordered word positions.
+3. Generate every contiguous span of length one, two, or three words.
+4. Mark one candidate at a time with `<<...>>` and pair that context with the
+   concept query.
+5. Run all pairs through the same cross-encoder batch and receive one scalar
+   compatibility score per pair.
+6. Rank the candidates for that graph item and attach the highest-ranked span,
+   subject to an optional matching `grounding_terms` anchor.
+
+Conceptually, for concept $c$ and candidate span $x_i$ the model computes:
+
+$$
+s(c, x_i) = f(\text{concept query},\ \text{marked paragraph with }x_i)
+$$
+
+and the raw model choice is:
+
+$$
+x^* = \operatorname*{arg\,max}_i s(c, x_i)
+$$
+
+The lexical-anchor step exists because an STS model is trained to compare the
+meaning of two texts, not to identify a gold answer span. Since every marked
+candidate contains the same paragraph, a generic long phrase can otherwise
+receive the highest score for several unrelated concepts. An ontology term
+such as `river`, `storm`, or `flooded` provides a precise one-word anchor when
+the ontology author has supplied one; the model scores and full diagnostics
+are still retained for inspection.
+
 ## Laya's basic vocabulary
 
 ### State
