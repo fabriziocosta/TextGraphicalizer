@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -16,6 +17,66 @@ from .ontology import Ontology, load_ontology
 from .optimizer import EdgeEvidence, NodeEvidence, select_graph, select_graph_by_threshold
 
 logger = logging.getLogger(__name__)
+
+
+# Deliberately small and dependency-free. These words are removed only from
+# the grounding candidate set; they are still present in the sentence passed
+# to Laya.
+SIMPLE_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "by",
+        "for",
+        "from",
+        "had",
+        "has",
+        "have",
+        "he",
+        "her",
+        "his",
+        "i",
+        "in",
+        "is",
+        "it",
+        "its",
+        "me",
+        "my",
+        "of",
+        "on",
+        "or",
+        "our",
+        "she",
+        "that",
+        "the",
+        "their",
+        "them",
+        "there",
+        "these",
+        "they",
+        "this",
+        "those",
+        "to",
+        "was",
+        "we",
+        "were",
+        "what",
+        "when",
+        "where",
+        "which",
+        "who",
+        "will",
+        "with",
+        "you",
+        "your",
+    }
+)
+_WORD_RE = re.compile(r"[A-Za-z]+(?:['’][A-Za-z]+)?")
 
 
 def _confidence(answer: Mapping[str, Any]) -> float | None:
@@ -111,6 +172,167 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             }
             for index, concept in enumerate(self.ontology_.concepts)
         }
+
+    @staticmethod
+    def _content_words(text: str) -> list[tuple[int, str]]:
+        """Return original token positions and non-stopword single words."""
+        words = _WORD_RE.findall(text)
+        return [
+            (index, word)
+            for index, word in enumerate(words)
+            if word.casefold() not in SIMPLE_STOPWORDS
+        ]
+
+    @staticmethod
+    def _word_criteria(words: Sequence[tuple[int, str]]) -> dict[str, str]:
+        return {
+            f"word_{index}": word
+            for index, word in words
+        }
+
+    def _grounding_questions(
+        self,
+        graph: nx.DiGraph,
+        words: Sequence[tuple[int, str]],
+    ) -> tuple[dict[str, dict[str, Any]], dict[str, tuple[str, str | tuple[str, str]]]]:
+        """Build one choice question per selected node and edge."""
+        criteria = self._word_criteria(words)
+        questions: dict[str, dict[str, Any]] = {}
+        question_map: dict[str, tuple[str, str | tuple[str, str]]] = {}
+
+        for index, node_id in enumerate(graph.nodes):
+            question_id = f"ground_node_{index}"
+            label = graph.nodes[node_id].get("label", node_id)
+            questions[question_id] = {
+                "type": "choice",
+                "instructions": (
+                    f'Which single word in this sentence best expresses the '
+                    f'concept "{label}"?'
+                ),
+                "criteria": criteria,
+            }
+            question_map[question_id] = ("node", str(node_id))
+
+        for index, (source, target, data) in enumerate(graph.edges(data=True)):
+            question_id = f"ground_edge_{index}"
+            source_label = graph.nodes[source].get("label", source)
+            target_label = graph.nodes[target].get("label", target)
+            relation_label = data.get("label", "relation")
+            questions[question_id] = {
+                "type": "choice",
+                "instructions": (
+                    f'Which single word in this sentence best expresses the '
+                    f'relation "{relation_label}" from "{source_label}" '
+                    f'to "{target_label}"?'
+                ),
+                "criteria": criteria,
+            }
+            question_map[question_id] = ("edge", (str(source), str(target)))
+
+        return questions, question_map
+
+    @staticmethod
+    def _apply_grounding(
+        graph: nx.DiGraph,
+        answers: Mapping[str, Any],
+        question_map: Mapping[str, tuple[str, str | tuple[str, str]]],
+        words: Sequence[tuple[int, str]],
+    ) -> None:
+        """Attach the highest-probability candidate word to each graph item."""
+        candidate_keys = {f"word_{index}": (index, word) for index, word in words}
+        for question_id, (kind, target) in question_map.items():
+            answer = answers.get(question_id)
+            if not isinstance(answer, Mapping):
+                raise ValueError(f"Laya did not return an answer for {question_id}")
+            probabilities = answer.get("probabilities")
+            if not isinstance(probabilities, Mapping):
+                raise ValueError(
+                    f"Laya response for {question_id} lacks word probabilities"
+                )
+            available = {
+                key: float(probability)
+                for key, probability in probabilities.items()
+                if key in candidate_keys
+            }
+            if not available:
+                raise ValueError(
+                    f"Laya response for {question_id} lacks probabilities for candidate words"
+                )
+            best_key = max(available, key=available.get)
+            word_index, word = candidate_keys[best_key]
+            attributes = {
+                "word": word,
+                "word_index": word_index,
+                "word_probability": available[best_key],
+            }
+            if kind == "node":
+                graph.nodes[target].update(attributes)  # type: ignore[index]
+            else:
+                source, destination = target  # type: ignore[misc]
+                graph.edges[source, destination].update(attributes)
+
+    @staticmethod
+    def _display_edges(
+        graph: nx.DiGraph,
+    ) -> tuple[list[tuple[Any, Any, dict[str, Any]]], list[tuple[Any, Any, dict[str, Any]]]]:
+        """Split edges into collapsed reciprocal and remaining directed edges."""
+        undirected: list[tuple[Any, Any, dict[str, Any]]] = []
+        directed: list[tuple[Any, Any, dict[str, Any]]] = []
+        collapsed_pairs: set[frozenset[Any]] = set()
+
+        for source, target, data in graph.edges(data=True):
+            reverse_data = graph.get_edge_data(target, source)
+            same_label = (
+                source != target
+                and reverse_data is not None
+                and data.get("label") == reverse_data.get("label")
+            )
+            pair = frozenset((source, target))
+            if not same_label or pair in collapsed_pairs:
+                if not same_label:
+                    directed.append((source, target, dict(data)))
+                continue
+
+            collapsed_pairs.add(pair)
+            merged = dict(data)
+            reverse_word = reverse_data.get("word")
+            word = data.get("word")
+            words = list(dict.fromkeys(
+                str(value) for value in (word, reverse_word) if value is not None
+            ))
+            if words:
+                merged["word"] = " / ".join(words)
+            for field in ("probability", "existence_probability", "relation_probability"):
+                values = [
+                    float(value)
+                    for value in (data.get(field), reverse_data.get(field))
+                    if value is not None
+                ]
+                if values:
+                    merged[field] = max(values)
+            undirected.append((source, target, merged))
+
+        return undirected, directed
+
+    @staticmethod
+    def _node_display_label(node: Any, data: Mapping[str, Any], show_probabilities: bool) -> str:
+        parts = [str(data.get("label", node))]
+        if data.get("word") is not None:
+            parts.append(str(data["word"]))
+        if show_probabilities:
+            parts.append(f"{float(data.get('probability', 0.0)):.2f}")
+        return "\n".join(parts)
+
+    @staticmethod
+    def _edge_display_label(data: Mapping[str, Any], show_probabilities: bool) -> str:
+        parts = []
+        if data.get("label") is not None:
+            parts.append(str(data["label"]))
+        if data.get("word") is not None:
+            parts.append(str(data["word"]))
+        if show_probabilities:
+            parts.append(f"{float(data.get('probability', 0.0)):.2f}")
+        return "\n".join(parts)
 
     def _transform_one(self, text: str) -> nx.DiGraph:
         """Transform one paragraph after readiness checks have completed."""
@@ -222,6 +444,19 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                 node_threshold=self.node_threshold,
                 edge_threshold=self.edge_threshold,
             )
+        grounding_questions: dict[str, dict[str, Any]] = {}
+        content_words = self._content_words(text)
+        if content_words and (graph.nodes or graph.edges):
+            grounding_questions, grounding_map = self._grounding_questions(
+                graph, content_words
+            )
+            grounding_result = self.backend_.predict(text, grounding_questions)
+            self._apply_grounding(
+                graph,
+                grounding_result.get("answers", {}),
+                grounding_map,
+                content_words,
+            )
         graph.graph.update(
             {
                 "ontology_version": self.ontology_.version,
@@ -235,8 +470,10 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                 "connected": self.connected,
                 "max_node_degree": self.max_node_degree,
                 "solver": "scipy.optimize.milp" if self.use_milp else "thresholds",
+                "grounding_stopwords_removed": True,
+                "grounding_candidate_words": [word for _, word in content_words],
                 "input_truncated": self.backend_.was_truncated(
-                    text, {**node_questions, **edge_questions}
+                    text, {**node_questions, **edge_questions, **grounding_questions}
                 ),
             }
         )
@@ -357,11 +594,10 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                 "layout must be 'spring', 'kamada_kawai', 'circular', 'shell', or a callable"
             )
 
+        undirected_edges, directed_edges = self._display_edges(graph)
+        display_edges = undirected_edges + directed_edges
         node_probabilities = [
             float(graph.nodes[node].get("probability", 0.0)) for node in graph.nodes
-        ]
-        edge_probabilities = [
-            float(graph.edges[edge].get("probability", 0.0)) for edge in graph.edges
         ]
         node_sizes = (
             [
@@ -371,10 +607,17 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             if scale_node_size_by_probability
             else [node_size] * len(node_probabilities)
         )
-        edge_widths = [
-            edge_width_min + (edge_width_max - edge_width_min) * probability
-            for probability in edge_probabilities
-        ] if scale_edge_width_by_probability else [edge_width_min] * len(edge_probabilities)
+        edge_probabilities = [
+            float(data.get("probability", 0.0)) for _, _, data in display_edges
+        ]
+        edge_widths = (
+            [
+                edge_width_min + (edge_width_max - edge_width_min) * probability
+                for probability in edge_probabilities
+            ]
+            if scale_edge_width_by_probability
+            else [edge_width_min] * len(edge_probabilities)
+        )
         node_color_map = plt.get_cmap(node_cmap) if isinstance(node_cmap, str) else node_cmap
         edge_color_map = plt.get_cmap(edge_cmap) if isinstance(edge_cmap, str) else edge_cmap
 
@@ -392,16 +635,43 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                 edgecolors=node_edge_color,
                 linewidths=node_edge_width,
             )
-        if graph.number_of_edges() > 0:
+        if display_edges:
+            undirected_widths = edge_widths[:len(undirected_edges)]
+            directed_widths = edge_widths[len(undirected_edges):]
+            undirected_probabilities = edge_probabilities[:len(undirected_edges)]
+            directed_probabilities = edge_probabilities[len(undirected_edges):]
+        else:
+            undirected_widths = []
+            directed_widths = []
+            undirected_probabilities = []
+            directed_probabilities = []
+        if undirected_edges:
             nx.draw_networkx_edges(
                 graph,
                 positions,
                 ax=axes,
+                edgelist=[(source, target) for source, target, _ in undirected_edges],
+                arrows=False,
+                width=undirected_widths,
+                edge_color=undirected_probabilities if color_by_probability else edge_color,
+                edge_cmap=edge_color_map if color_by_probability else None,
+                edge_vmin=0.0 if color_by_probability else None,
+                edge_vmax=1.0 if color_by_probability else None,
+                connectionstyle=connectionstyle,
+                min_source_margin=14,
+                min_target_margin=18,
+            )
+        if directed_edges:
+            nx.draw_networkx_edges(
+                graph,
+                positions,
+                ax=axes,
+                edgelist=[(source, target) for source, target, _ in directed_edges],
                 arrows=True,
                 arrowstyle="-|>",
                 arrowsize=arrowsize,
-                width=edge_widths,
-                edge_color=edge_probabilities if color_by_probability else edge_color,
+                width=directed_widths,
+                edge_color=directed_probabilities if color_by_probability else edge_color,
                 edge_cmap=edge_color_map if color_by_probability else None,
                 edge_vmin=0.0 if color_by_probability else None,
                 edge_vmax=1.0 if color_by_probability else None,
@@ -413,10 +683,9 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         if show_node_labels and graph.number_of_nodes() > 0:
             node_labels = {}
             for node, data in graph.nodes(data=True):
-                label = str(data.get("label", node))
-                if show_probabilities:
-                    label += f"\n{float(data.get('probability', 0.0)):.2f}"
-                node_labels[node] = label
+                node_labels[node] = self._node_display_label(
+                    node, data, show_probabilities
+                )
             nx.draw_networkx_labels(
                 graph,
                 positions,
@@ -427,28 +696,45 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                 bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.72, "pad": 1.5},
             )
 
-        if show_edge_labels and graph.number_of_edges() > 0:
-            edge_labels = {}
-            for source, target, data in graph.edges(data=True):
-                label = str(data.get("label", ""))
-                if show_probabilities:
-                    label += f"  {float(data.get('probability', 0.0)):.2f}"
-                edge_labels[(source, target)] = label
-            nx.draw_networkx_edge_labels(
-                graph,
-                positions,
-                edge_labels=edge_labels,
-                ax=axes,
-                font_size=8,
-                font_color="black",
-                rotate=False,
-                label_pos=0.52,
-                bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.92, "pad": 2},
-            )
+        if show_edge_labels and display_edges:
+            undirected_labels = {
+                (source, target): self._edge_display_label(data, show_probabilities)
+                for source, target, data in undirected_edges
+            }
+            directed_labels = {
+                (source, target): self._edge_display_label(data, show_probabilities)
+                for source, target, data in directed_edges
+            }
+            if undirected_labels:
+                label_graph = nx.Graph()
+                label_graph.add_edges_from(undirected_labels)
+                nx.draw_networkx_edge_labels(
+                    label_graph,
+                    positions,
+                    edge_labels=undirected_labels,
+                    ax=axes,
+                    font_size=8,
+                    font_color="black",
+                    rotate=False,
+                    label_pos=0.52,
+                    bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.92, "pad": 2},
+                )
+            if directed_labels:
+                nx.draw_networkx_edge_labels(
+                    graph,
+                    positions,
+                    edge_labels=directed_labels,
+                    ax=axes,
+                    font_size=8,
+                    font_color="black",
+                    rotate=False,
+                    label_pos=0.52,
+                    bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.92, "pad": 2},
+                )
 
         graph_title = title or "TextGraphicalizer graph"
         axes.set_title(
-            f"{graph_title}  ·  {graph.number_of_nodes()} nodes / {graph.number_of_edges()} edges",
+            f"{graph_title}  ·  {graph.number_of_nodes()} nodes / {len(display_edges)} edges",
             pad=16,
         )
         if show_paragraph and paragraph:
@@ -467,7 +753,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             axes.text(
                 0.01,
                 0.01,
-                "node color/size = node probability   ·   edge width/label = edge probability",
+                "node color/size = node probability   ·   edge width/color = edge probability   ·   labels = label / word",
                 transform=axes.transAxes,
                 ha="left",
                 va="bottom",

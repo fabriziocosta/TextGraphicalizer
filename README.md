@@ -93,6 +93,13 @@ full Laya sequence for every node and relation question, including question
 instructions, relation options, special tokens, and the configured 512-token
 budget—not against the paragraph token count alone.
 
+For every selected node and edge, TextGraphicalizer also asks Laya to choose
+the best single content word from the sentence. Stopwords are removed from
+this choice set with a small built-in list, while the complete sentence is
+still passed to Laya. The result is stored as `word`, `word_index`, and
+`word_probability` on the corresponding node or edge. Selection is direct
+argmax over Laya's word probabilities; no additional optimizer is used.
+
 ## Rendering graphs
 
 `TextGraphicalizer.display()` renders any resulting graph and returns its

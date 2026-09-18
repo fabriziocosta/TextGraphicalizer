@@ -1,3 +1,4 @@
+import networkx as nx
 import pytest
 
 from textgraphicalizer import TextGraphicalizer
@@ -16,6 +17,9 @@ ONTOLOGY = {
 
 
 class FakeBackend:
+    def __init__(self):
+        self.grounding_questions = []
+
     def predict(self, text, questions):
         answers = {}
         for question_id, question in questions.items():
@@ -25,6 +29,19 @@ class FakeBackend:
                     "type": "noul",
                     "noul": [0.9, 0.8, 0.1][index],
                     "confidence": 0.7,
+                }
+            elif question_id.startswith("ground_"):
+                self.grounding_questions.append(question)
+                keys = list(question["criteria"])
+                probabilities = {
+                    key: 0.9 if key == keys[0] else 0.1
+                    for key in keys
+                }
+                answers[question_id] = {
+                    "type": "choice",
+                    "choice": keys[0],
+                    "probabilities": probabilities,
+                    "confidence": 0.6,
                 }
             else:
                 is_a_to_b = 'from "A" to "B"' in question["instructions"]
@@ -150,6 +167,23 @@ def test_transform_returns_graph_with_evidence(monkeypatch):
     assert graph.graph["input_truncated"] is False
 
 
+def test_grounding_uses_single_non_stopwords_for_selected_items(monkeypatch):
+    estimator = fitted(monkeypatch)
+    graph = estimator.transform("The infection caused a fever.")
+
+    assert graph.nodes["a"]["word"] == "infection"
+    assert graph.nodes["b"]["word"] == "infection"
+    assert graph.edges["a", "b"]["word"] == "infection"
+    assert graph.graph["grounding_candidate_words"] == ["infection", "caused", "fever"]
+
+    grounding_questions = estimator.backend_.grounding_questions
+    assert len(grounding_questions) == 3
+    assert all(
+        list(question["criteria"]) == ["word_1", "word_2", "word_4"]
+        for question in grounding_questions
+    )
+
+
 def test_transform_sequence_returns_graphs(monkeypatch):
     estimator = fitted(monkeypatch)
     graphs = estimator.transform(["A causes B.", "B causes A."])
@@ -239,3 +273,39 @@ def test_display_defaults_to_kamada_kawai(monkeypatch):
 
     assert calls == [graph]
     plt.close(figure)
+
+
+def test_display_collapses_reciprocal_edges_with_the_same_label():
+    graph = nx.DiGraph()
+    graph.add_edge(
+        "a",
+        "b",
+        label="supports",
+        word="supports",
+        probability=0.7,
+    )
+    graph.add_edge(
+        "b",
+        "a",
+        label="supports",
+        word="supports",
+        probability=0.9,
+    )
+
+    undirected, directed = TextGraphicalizer._display_edges(graph)
+
+    assert len(undirected) == 1
+    assert directed == []
+    assert undirected[0][2]["probability"] == 0.9
+
+
+def test_display_labels_include_associated_words():
+    assert TextGraphicalizer._node_display_label(
+        "infection",
+        {"label": "Infection", "word": "infection"},
+        False,
+    ) == "Infection\ninfection"
+    assert TextGraphicalizer._edge_display_label(
+        {"label": "causes", "word": "caused"},
+        False,
+    ) == "causes\ncaused"

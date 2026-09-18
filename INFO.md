@@ -18,6 +18,10 @@ TextGraphicalizer uses those answers in two stages by default:
 2. A mixed-integer optimizer chooses a globally consistent subset of that
    evidence and returns a directed NetworkX graph.
 
+After the graph is selected, a lightweight grounding pass asks Laya to choose
+one content word for each retained node and edge. This pass uses direct
+argmax, not another optimization problem.
+
 Set `use_milp=False` to skip the second-stage optimizer and retain nodes and
 edges by applying `node_threshold` and `edge_threshold` directly. In that mode,
 `connected` and `max_node_degree` are ignored.
@@ -27,6 +31,7 @@ In symbols, the overall idea is:
 $$
 Text → Laya questions → weighted candidates
 → constraints + optimization → final graph
+→ selected-item word grounding
 $$
 
 Laya does not know that the output should be a graph. The graph structure is
