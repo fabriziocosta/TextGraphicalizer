@@ -28,15 +28,20 @@ class FakeBackend:
                     "confidence": 0.7,
                 }
             else:
+                is_a_to_b = 'from "A" to "B"' in question["instructions"]
                 answers[question_id] = {
                     "type": "choice",
                     "choice": "causes",
-                    "probabilities": {"causes": 0.8, "no_relation": 0.2},
+                    "probabilities": (
+                        {"causes": 0.8, "no_relation": 0.2}
+                        if is_a_to_b
+                        else {"causes": 0.05, "no_relation": 0.95}
+                    ),
                     "confidence": 0.6,
                 }
         return {"answers": answers}
 
-    def was_truncated(self, text):
+    def was_truncated(self, text, questions=None):
         return False
 
 
@@ -58,7 +63,7 @@ def test_fit_does_not_load_model(monkeypatch):
     monkeypatch.setattr("textgraphicalizer.transformer.LayaBackend.load", load)
     estimator = TextGraphicalizer(ONTOLOGY).fit()
     assert calls == []
-    with pytest.raises(RuntimeError, match="Call load_model\(\)"):
+    with pytest.raises(RuntimeError, match=r"Call load_model\(\)"):
         estimator.transform("A causes B.")
 
 
@@ -123,7 +128,7 @@ def test_relation_questions_are_domain_filtered(monkeypatch):
         "textgraphicalizer.transformer.LayaBackend.load",
         lambda self: FakeBackend(),
     )
-    estimator = TextGraphicalizer(ontology).fit()
+    estimator = TextGraphicalizer(ontology).fit().load_model()
     graph = estimator.transform("A causes B.")
     assert set(graph.edges) == {("a", "b")}
 
@@ -131,7 +136,7 @@ def test_relation_questions_are_domain_filtered(monkeypatch):
 def test_transform_requires_string(monkeypatch):
     estimator = fitted(monkeypatch)
     with pytest.raises(TypeError):
-        estimator.transform(["not a paragraph"])
+        estimator.transform(["not a paragraph", 42])
 
 
 def test_display_is_parameterized_and_returns_matplotlib_objects(monkeypatch):

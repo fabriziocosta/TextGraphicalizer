@@ -74,8 +74,21 @@ print(graph.nodes(data=True))
 print(graph.edges(data=True))
 ```
 
-The estimator returns a directed graph. Nodes and edges contain `label`,
-`probability`, and, when available, Laya's distinct `confidence` value.
+The estimator returns a directed graph for one string, or a list of graphs
+when passed a sequence of strings. Nodes contain `label`, `probability`, and,
+when available, Laya's distinct `confidence` value. Edges retain `probability`
+as an alias for existence probability and also expose separate
+`existence_probability` and `relation_probability` attributes.
+
+All ontology concepts are scored before optimization. `node_threshold` and
+`edge_threshold` are threshold-relative MILP objective settings, not early
+filters; the optimizer can select a below-threshold node when it improves the
+overall graph.
+
+Graph metadata includes `input_truncated`. This flag is computed against the
+full Laya sequence for every node and relation question, including question
+instructions, relation options, special tokens, and the configured 512-token
+budget—not against the paragraph token count alone.
 
 ## Rendering graphs
 

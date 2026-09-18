@@ -52,6 +52,16 @@ def test_connected_graph_includes_all_positive_nodes():
     assert nx.is_weakly_connected(graph)
 
 
+def test_connected_graph_can_select_below_threshold_node_for_strong_edge():
+    graph = select_graph(
+        nodes(0.9, 0.4),
+        [edge(0, 1, probability=0.99)],
+        **kwargs(connected=True),
+    )
+    assert set(graph.nodes) == {"0", "1"}
+    assert graph.has_edge("0", "1")
+
+
 def test_connected_graph_reports_infeasibility():
     with pytest.raises(GraphOptimizationError):
         select_graph([], [], **kwargs(connected=True))

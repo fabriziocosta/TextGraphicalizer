@@ -114,26 +114,28 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         node_questions = self._node_questions()
         node_result = self.backend_.predict(text, node_questions)
         node_answers = node_result.get("answers", {})
-        candidate_nodes: list[NodeEvidence] = []
+        node_evidence: list[NodeEvidence] = []
         for index, concept in enumerate(self.ontology_.concepts):
             answer = node_answers.get(f"node_{index}")
             if answer is None:
                 raise ValueError(f"Laya did not return an answer for node_{index}")
             probability = float(answer.get("noul"))
-            if probability >= self.node_threshold:
-                candidate_nodes.append(
-                    NodeEvidence(
-                        concept_id=concept.id,
-                        label=concept.label,
-                        probability=probability,
-                        confidence=_confidence(answer),
-                    )
+            # Keep every scored concept. The MILP owns node existence and
+            # decides whether below-threshold nodes are worthwhile for a
+            # coherent graph.
+            node_evidence.append(
+                NodeEvidence(
+                    concept_id=concept.id,
+                    label=concept.label,
+                    probability=probability,
+                    confidence=_confidence(answer),
                 )
+            )
 
         edge_questions: dict[str, dict[str, Any]] = {}
         pair_map: dict[str, tuple[str, str]] = {}
-        for source in candidate_nodes:
-            for target in candidate_nodes:
+        for source in node_evidence:
+            for target in node_evidence:
                 if source.concept_id == target.concept_id:
                     continue
                 relations = self.ontology_.valid_relations(source.concept_id, target.concept_id)
@@ -189,7 +191,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             )
 
         graph = select_graph(
-            candidate_nodes,
+            node_evidence,
             candidate_edges,
             node_threshold=self.node_threshold,
             edge_threshold=self.edge_threshold,
@@ -208,7 +210,9 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                 "connected": self.connected,
                 "max_node_degree": self.max_node_degree,
                 "solver": "scipy.optimize.milp",
-                "input_truncated": self.backend_.was_truncated(text),
+                "input_truncated": self.backend_.was_truncated(
+                    text, {**node_questions, **edge_questions}
+                ),
             }
         )
         return graph
@@ -451,7 +455,9 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             plt.show()
         return figure, axes
 
-    def fit_transform(self, X: Any = None, y: Any = None, **fit_params: Any) -> nx.DiGraph:
+    def fit_transform(
+        self, X: Any = None, y: Any = None, **fit_params: Any
+    ) -> nx.DiGraph | list[nx.DiGraph]:
         del fit_params
         self.fit(X, y)
         self.load_model()
