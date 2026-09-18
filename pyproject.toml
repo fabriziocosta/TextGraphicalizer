@@ -23,6 +23,11 @@ dependencies = [
 dev = [
     "pytest>=8.0",
 ]
+notebook = [
+    "jupyterlab>=4.0",
+    "matplotlib>=3.7",
+    "ipykernel>=6.0",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

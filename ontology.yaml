@@ -1,0 +1,215 @@
+# Initial high-level ontology aligned with Princeton WordNet.
+#
+# Concept IDs retain readable WordNet synset names in the `wordnet_synset`
+# metadata field. The estimator uses the IDs, labels, and descriptions when
+# constructing Laya questions; the extra WordNet metadata is available for
+# future synset expansion and validation.
+#
+# WordNet distinguishes senses rather than only word strings. This file starts
+# at broad noun/verb concepts so it can serve as a stable first-pass ontology
+# before adding domain-specific synsets.
+
+version: 1
+
+concepts:
+  - id: entity
+    label: Entity
+    description: Something that is perceived, known, or inferred to have its own distinct existence, living or nonliving.
+    wordnet_synset: entity.n.01
+    part_of_speech: noun
+
+  - id: physical_entity
+    label: Physical entity
+    description: An entity that has physical existence.
+    wordnet_synset: physical_entity.n.01
+    part_of_speech: noun
+
+  - id: abstraction
+    label: Abstraction
+    description: A general concept formed by extracting common features from specific examples.
+    wordnet_synset: abstraction.n.06
+    part_of_speech: noun
+
+  - id: person
+    label: Person
+    description: A human being.
+    wordnet_synset: person.n.01
+    part_of_speech: noun
+
+  - id: group
+    label: Group
+    description: A number of entities considered together as a unit.
+    wordnet_synset: group.n.01
+    part_of_speech: noun
+
+  - id: organization
+    label: Organization
+    description: A structured, organized entity such as a business, institution, or political body.
+    wordnet_synset: organization.n.01
+    part_of_speech: noun
+
+  - id: location
+    label: Location
+    description: A point or extent in physical space.
+    wordnet_synset: location.n.01
+    part_of_speech: noun
+
+  - id: artifact
+    label: Artifact
+    description: A whole object made by humans.
+    wordnet_synset: artifact.n.01
+    part_of_speech: noun
+
+  - id: natural_object
+    label: Natural object
+    description: An object occurring naturally rather than being made by humans.
+    wordnet_synset: natural_object.n.01
+    part_of_speech: noun
+
+  - id: animal
+    label: Animal
+    description: A living organism generally characterized by voluntary movement and sensory response.
+    wordnet_synset: animal.n.01
+    part_of_speech: noun
+
+  - id: plant
+    label: Plant
+    description: A living organism that generally lacks the power of locomotion.
+    wordnet_synset: plant.n.02
+    part_of_speech: noun
+
+  - id: substance
+    label: Substance
+    description: The physical matter of which a person or thing consists.
+    wordnet_synset: substance.n.07
+    part_of_speech: noun
+
+  - id: food
+    label: Food
+    description: A substance used as a source of nourishment.
+    wordnet_synset: food.n.01
+    part_of_speech: noun
+
+  - id: event
+    label: Event
+    description: Something that happens at a particular place or time.
+    wordnet_synset: event.n.01
+    part_of_speech: noun
+
+  - id: act
+    label: Act
+    description: Something that people do or cause to happen.
+    wordnet_synset: act.n.02
+    part_of_speech: noun
+
+  - id: process
+    label: Process
+    description: A series of actions, changes, or functions that brings about a result.
+    wordnet_synset: process.n.06
+    part_of_speech: noun
+
+  - id: state
+    label: State
+    description: The way something is with respect to its main attributes.
+    wordnet_synset: state.n.02
+    part_of_speech: noun
+
+  - id: attribute
+    label: Attribute
+    description: An abstraction belonging to or characteristic of an entity.
+    wordnet_synset: attribute.n.02
+    part_of_speech: noun
+
+  - id: communication
+    label: Communication
+    description: Something communicated by or to or between people or groups.
+    wordnet_synset: communication.n.02
+    part_of_speech: noun
+
+  - id: cognition
+    label: Cognition
+    description: The psychological result of perception, learning, and reasoning.
+    wordnet_synset: cognition.n.01
+    part_of_speech: noun
+
+  - id: time_period
+    label: Time period
+    description: An amount or interval of time.
+    wordnet_synset: time_period.n.01
+    part_of_speech: noun
+
+  - id: quantity
+    label: Quantity
+    description: The concept that something has a magnitude or collection of units.
+    wordnet_synset: quantity.n.01
+    part_of_speech: noun
+
+  - id: relation
+    label: Relation
+    description: An abstraction characteristic of two entities or parts considered together.
+    wordnet_synset: relation.n.01
+    part_of_speech: noun
+
+relations:
+  # WordNet hypernymy/hyponymy. Direction: specific source -> general target.
+  - id: is_a
+    label: is a
+    description: The source is a kind of, instance of, or specialization of the target.
+    wordnet_pointer: hypernymy_hyponymy
+
+  # WordNet part meronymy. Direction: component -> whole.
+  - id: part_of
+    label: part of
+    description: The source is a physical or conceptual component of the target.
+    wordnet_pointer: part_meronymy
+
+  # WordNet member meronymy. Direction: member -> group/organization.
+  - id: member_of
+    label: member of
+    description: The source is a member of the target group or organization.
+    wordnet_pointer: member_meronymy
+    source_concepts: [person, animal, plant, group, organization]
+    target_concepts: [group, organization]
+
+  # WordNet substance meronymy. Direction: substance -> whole.
+  - id: made_of
+    label: made of
+    description: The target is made from or contains the source substance.
+    wordnet_pointer: substance_meronymy
+    source_concepts: [substance, food]
+    target_concepts: [physical_entity, artifact, natural_object, animal, plant, food]
+
+  # WordNet attribute relation. Direction: entity -> characteristic.
+  - id: has_attribute
+    label: has attribute
+    description: The source has the target as a characteristic or attribute.
+    wordnet_pointer: attribute
+    target_concepts: [attribute]
+
+  - id: located_in
+    label: located in
+    description: The source is located, situated, or takes place in the target location.
+    wordnet_pointer: location_extension
+    target_concepts: [location]
+
+  # WordNet cause pointer. Direction: cause/event/process -> result.
+  - id: causes
+    label: causes
+    description: The source produces, brings about, or is responsible for the target.
+    wordnet_pointer: cause
+    source_concepts: [event, act, process, state]
+    target_concepts: [event, act, process, state]
+
+  # WordNet verb entailment. Direction: entailing action -> entailed action.
+  - id: entails
+    label: entails
+    description: The source necessarily involves or implies the target.
+    wordnet_pointer: entailment
+    source_concepts: [act, process]
+    target_concepts: [act, process]
+
+  # Broad fallback relation for semantic association not captured above.
+  - id: related_to
+    label: related to
+    description: The source and target have a meaningful semantic association.
+    wordnet_pointer: also_see_or_general_semantic_relation
