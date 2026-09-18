@@ -12,8 +12,8 @@ import networkx as nx
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils.validation import check_is_fitted
 
-from .bert_backend import BertGroundingBackend
 from .laya_backend import LayaBackend
+from .nli_backend import NliGroundingBackend
 from .ontology import Ontology, load_ontology
 from .optimizer import EdgeEvidence, NodeEvidence, select_graph, select_graph_by_threshold
 from .stopwords import DEFAULT_STOPWORDS_PATH, load_stopwords
@@ -45,7 +45,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         connected: bool = False,
         max_node_degree: int | None = None,
         stopwords_path: str | Path | None = None,
-        grounding_model_id: str = "bert-base-uncased",
+        grounding_model_id: str = "cross-encoder/nli-distilroberta-base",
     ) -> None:
         self.ontology = ontology
         self.model_id = model_id
@@ -114,7 +114,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             model_revision=self.model_revision,
             device=self.device,
         ).load()
-        self.grounding_backend_: BertGroundingBackend = BertGroundingBackend(
+        self.grounding_backend_: NliGroundingBackend = NliGroundingBackend(
             model_id=self.grounding_model_id,
             device=self.device,
         ).load()
@@ -149,7 +149,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         graph: nx.DiGraph,
         concepts_by_node: Mapping[str, str],
     ) -> dict[str, dict[str, Any]]:
-        """Ground selected nodes by contextual BERT cosine similarity."""
+        """Ground selected nodes by NLI entailment probability."""
         if not words or graph.number_of_nodes() == 0 or not concepts_by_node:
             return {}
         scores = self.grounding_backend_.score_words(text, words, concepts_by_node)
@@ -162,7 +162,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         graph: nx.DiGraph,
         relations_by_edge: Mapping[tuple[str, str], str],
     ) -> dict[tuple[str, str], dict[str, Any]]:
-        """Ground selected edges by contextual BERT cosine similarity."""
+        """Ground selected edges by NLI entailment probability."""
         if not words or graph.number_of_edges() == 0 or not relations_by_edge:
             return {}
         scores = self.grounding_backend_.score_words(text, words, relations_by_edge)
@@ -382,7 +382,8 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         concept_by_id = self.ontology_.concept_by_id
         node_descriptions = {
             str(node): (
-                f"{graph.nodes[node]['label']}. "
+                f'The word "{{word}}" directly refers to the concept '
+                f'"{graph.nodes[node]["label"]}". '
                 f"{concept_by_id[node].description}"
             )
             for node in graph.nodes
@@ -399,7 +400,9 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         relation_by_label = {relation.label: relation for relation in relation_by_id.values()}
         edge_descriptions = {
             (str(source), str(target)): (
-                f"{data['label']}. "
+                f'The word "{{word}}" directly expresses the relation '
+                f'"{data["label"]}" from "{graph.nodes[source]["label"]}" '
+                f'to "{graph.nodes[target]["label"]}". '
                 f"{relation_by_label[data['label']].description}"
             )
             for source, target, data in graph.edges(data=True)
