@@ -19,11 +19,10 @@ python -m pip install -e ".[notebook]"
 python -m ipykernel install --user --name py312 --display-name "py312"
 ```
 
-`load_model()` initializes Laya once; this may download the pinned
-`convaiinnovations/laya` checkpoint into the standard Hugging Face cache.
-`fit()` only validates/configures the estimator and preserves an already-loaded
-model, so `fit_transform()` can be used after `load_model()`. The model weights
-are not stored in this repository. To run offline, pass a previously downloaded
+Constructing `TextGraphicalizer` initializes Laya once; this may download the
+pinned `convaiinnovations/laya` checkpoint into the standard Hugging Face
+cache. `.load_model()` remains available and idempotent. The model weights are
+not stored in this repository. To run offline, pass a previously downloaded
 snapshot with `model_path`.
 
 By default, graph selection uses the MILP optimizer. Set `use_milp=False` to
@@ -68,7 +67,11 @@ semantic relations.
 ```python
 from textgraphicalizer import TextGraphicalizer
 
-extractor = TextGraphicalizer("ontology.yaml", connected=False).load_model()
+extractor = TextGraphicalizer(
+    ontology="ontology.yaml",
+    stopwords_path="stopwords.yaml",
+    connected=False,
+)
 graph = extractor.fit_transform("An infection caused the patient to develop a fever.")
 
 print(graph.nodes(data=True))
@@ -99,8 +102,8 @@ this choice set using [`stopwords.yaml`](stopwords.yaml), while the complete
 sentence is still passed to Laya. Supply `stopwords_path=...` to use another
 YAML file. The result is stored as `word`, `word_index`, and
 `word_probability` on the corresponding node or edge. Selection is direct
-argmax over Laya's word probabilities, with `word=None` when no candidate
-directly expresses the item; no additional optimizer is used.
+independent argmax over Laya's word probabilities, with `word=None` when no
+candidate directly expresses the item; no additional optimizer is used.
 The checked-in default is derived from the [Snowball English stopword
 list](https://snowballstem.org/algorithms/english/stop.txt).
 

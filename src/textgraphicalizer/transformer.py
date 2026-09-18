@@ -56,6 +56,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         self.connected = connected
         self.max_node_degree = max_node_degree
         self.stopwords_path = stopwords_path
+        self.load_model()
 
     def _validate_parameters(self) -> None:
         for name, value in (
@@ -214,7 +215,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         question_map: Mapping[str, tuple[str, str | tuple[str, str]]],
         words: Sequence[tuple[int, str]],
     ) -> None:
-        """Attach the highest-probability candidate word to each graph item."""
+        """Attach the highest-probability word independently to each item."""
         candidate_keys = {f"word_{index}": (index, word) for index, word in words}
         for question_id, (kind, target) in question_map.items():
             answer = answers.get(question_id)
@@ -234,6 +235,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                 raise ValueError(
                     f"Laya response for {question_id} lacks probabilities for candidate words"
                 )
+            available.setdefault("none", 0.0)
             best_key = max(available, key=available.get)
             if best_key == "none":
                 attributes = {

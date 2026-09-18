@@ -69,7 +69,7 @@ def fitted(monkeypatch, **params):
     return TextGraphicalizer(ONTOLOGY, **params).load_model()
 
 
-def test_fit_does_not_load_model(monkeypatch):
+def test_init_loads_model_automatically(monkeypatch):
     calls = []
 
     def load(self):
@@ -78,12 +78,11 @@ def test_fit_does_not_load_model(monkeypatch):
 
     monkeypatch.setattr("textgraphicalizer.transformer.LayaBackend.load", load)
     estimator = TextGraphicalizer(ONTOLOGY).fit()
-    assert calls == []
-    with pytest.raises(RuntimeError, match=r"Call load_model\(\)"):
-        estimator.transform("A causes B.")
+    assert len(calls) == 1
+    assert estimator.transform("A causes B.").number_of_nodes() == 2
 
 
-def test_load_model_is_explicit_and_idempotent(monkeypatch):
+def test_load_model_remains_idempotent_after_automatic_loading(monkeypatch):
     calls = []
 
     def load(self):
@@ -91,7 +90,7 @@ def test_load_model_is_explicit_and_idempotent(monkeypatch):
         return FakeBackend()
 
     monkeypatch.setattr("textgraphicalizer.transformer.LayaBackend.load", load)
-    estimator = TextGraphicalizer(ONTOLOGY).fit()
+    estimator = TextGraphicalizer(ONTOLOGY)
     assert estimator.load_model() is estimator
     assert estimator.load_model() is estimator
     assert len(calls) == 1
