@@ -52,3 +52,28 @@ def test_rejects_unknown_domain_concept():
     data["relations"][0]["source_concepts"] = ["missing"]
     with pytest.raises(OntologyError, match="unknown concepts"):
         load_ontology(data)
+
+
+def test_reference_ontology_has_fine_grained_entities():
+    ontology = load_ontology("ontology.yaml")
+    concept_ids = {concept.id for concept in ontology.concepts}
+
+    assert len(ontology.concepts) == 48
+    assert {
+        "bridge",
+        "city",
+        "construction",
+        "drought",
+        "evacuation",
+        "flood",
+        "laboratory",
+        "river",
+        "sensor",
+        "shelter",
+        "storm",
+        "village",
+    } <= concept_ids
+    assert ontology.concept_by_id["river"].grounding_terms == ("river",)
+    assert "causes" in {
+        relation.id for relation in ontology.valid_relations("storm", "flood")
+    }

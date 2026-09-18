@@ -1,13 +1,13 @@
-# Initial high-level ontology aligned with Princeton WordNet.
+# Expanded starter ontology aligned with Princeton WordNet.
 #
 # Concept IDs retain readable WordNet synset names in the `wordnet_synset`
 # metadata field. The estimator uses the IDs, labels, and descriptions when
 # constructing Laya questions; the extra WordNet metadata is available for
 # future synset expansion and validation.
 #
-# WordNet distinguishes senses rather than only word strings. This file starts
-# at broad noun/verb concepts so it can serve as a stable first-pass ontology
-# before adding domain-specific synsets.
+# WordNet distinguishes senses rather than only word strings. This file keeps
+# broad concepts for compatibility and adds concrete concepts used by the
+# example paragraphs so extraction can operate at a finer resolution.
 
 version: 1
 
@@ -42,6 +42,13 @@ concepts:
     wordnet_synset: group.n.01
     part_of_speech: noun
 
+  - id: team
+    label: Team
+    description: A group of people who work together toward a shared task or goal.
+    grounding_terms: [team]
+    wordnet_synset: team.n.01
+    part_of_speech: noun
+
   - id: organization
     label: Organization
     description: A structured, organized entity such as a business, institution, or political body.
@@ -54,10 +61,73 @@ concepts:
     wordnet_synset: location.n.01
     part_of_speech: noun
 
+  - id: village
+    label: Village
+    description: A small human settlement, typically smaller than a town or city.
+    grounding_terms: [village]
+    wordnet_synset: village.n.01
+    part_of_speech: noun
+
+  - id: city
+    label: City
+    description: A large and permanent human settlement with many buildings and residents.
+    grounding_terms: [city]
+    wordnet_synset: city.n.01
+    part_of_speech: noun
+
+  - id: laboratory
+    label: Laboratory
+    description: A facility equipped for scientific research, measurement, or testing.
+    grounding_terms: [laboratory]
+    wordnet_synset: laboratory.n.01
+    part_of_speech: noun
+
+  - id: park
+    label: Park
+    description: An area of land set aside for recreation, conservation, or public use.
+    grounding_terms: [park]
+    wordnet_synset: park.n.01
+    part_of_speech: noun
+
   - id: artifact
     label: Artifact
     description: A whole object made by humans.
     wordnet_synset: artifact.n.01
+    part_of_speech: noun
+
+  - id: bridge
+    label: Bridge
+    description: A structure built to carry a road or path over an obstacle.
+    grounding_terms: [bridge]
+    wordnet_synset: bridge.n.01
+    part_of_speech: noun
+
+  - id: road
+    label: Road
+    description: A prepared route for vehicles or people to travel along.
+    grounding_terms: [road]
+    wordnet_synset: road.n.01
+    part_of_speech: noun
+
+  - id: shelter
+    label: Shelter
+    description: A structure or place that provides protection from weather or danger.
+    grounding_terms: [shelter]
+    wordnet_synset: shelter.n.01
+    part_of_speech: noun
+
+  - id: vehicle
+    label: Vehicle
+    description: A machine used to transport people or materials.
+    grounding_terms: [vehicle, bus]
+    wordnet_synset: vehicle.n.01
+    part_of_speech: noun
+
+  - id: sensor
+    label: Sensor
+    description: A device that detects and measures a physical condition.
+    grounding_terms: [sensor]
+    wordnet_synset: sensor.n.01
     part_of_speech: noun
 
   - id: natural_object
@@ -65,6 +135,13 @@ concepts:
     description: An object occurring naturally rather than being made by humans.
     grounding_terms: [river, tree, plant, animal, mountain, lake, rock, soil, water]
     wordnet_synset: natural_object.n.01
+    part_of_speech: noun
+
+  - id: river
+    label: River
+    description: A natural stream of flowing water.
+    grounding_terms: [river]
+    wordnet_synset: river.n.01
     part_of_speech: noun
 
   - id: animal
@@ -85,10 +162,31 @@ concepts:
     wordnet_synset: substance.n.07
     part_of_speech: noun
 
+  - id: soil
+    label: Soil
+    description: The upper layer of earth in which plants grow.
+    grounding_terms: [soil]
+    wordnet_synset: soil.n.01
+    part_of_speech: noun
+
+  - id: water
+    label: Water
+    description: A liquid substance essential to life and present in rivers, lakes, and other bodies.
+    grounding_terms: [water]
+    wordnet_synset: water.n.01
+    part_of_speech: noun
+
   - id: food
     label: Food
     description: A substance used as a source of nourishment.
     wordnet_synset: food.n.01
+    part_of_speech: noun
+
+  - id: crop
+    label: Crop
+    description: A plant cultivated for food or another useful product.
+    grounding_terms: [crop]
+    wordnet_synset: crop.n.02
     part_of_speech: noun
 
   - id: event
@@ -96,6 +194,41 @@ concepts:
     description: Something that happens at a particular place or time.
     grounding_terms: [storm, flood, accident, meeting, war, fire, drought, harvest]
     wordnet_synset: event.n.01
+    part_of_speech: noun
+
+  - id: storm
+    label: Storm
+    description: A weather event with strong wind, precipitation, or other severe conditions.
+    grounding_terms: [storm]
+    wordnet_synset: storm.n.01
+    part_of_speech: noun
+
+  - id: flood
+    label: Flood
+    description: An event in which water covers land that is normally dry.
+    grounding_terms: [flood, flooding, flooded]
+    wordnet_synset: flood.n.01
+    part_of_speech: noun
+
+  - id: drought
+    label: Drought
+    description: A prolonged period of unusually low precipitation and water shortage.
+    grounding_terms: [drought]
+    wordnet_synset: drought.n.01
+    part_of_speech: noun
+
+  - id: wildfire
+    label: Wildfire
+    description: An uncontrolled fire that spreads through vegetation or natural land.
+    grounding_terms: [wildfire, fire]
+    wordnet_synset: wildfire.n.01
+    part_of_speech: noun
+
+  - id: harvest_event
+    label: Harvest
+    description: The gathering of a cultivated crop or the crop gathered at that time.
+    grounding_terms: [harvest]
+    wordnet_synset: harvest.n.01
     part_of_speech: noun
 
   - id: act
@@ -112,11 +245,46 @@ concepts:
     wordnet_synset: process.n.06
     part_of_speech: noun
 
+  - id: inspection
+    label: Inspection
+    description: A deliberate examination performed to assess an object, condition, or system.
+    grounding_terms: [inspection, inspect, detected]
+    wordnet_synset: inspection.n.01
+    part_of_speech: noun
+
+  - id: evacuation
+    label: Evacuation
+    description: The organized movement of people away from danger to a safer place.
+    grounding_terms: [evacuation, evacuated]
+    wordnet_synset: evacuation.n.01
+    part_of_speech: noun
+
+  - id: monitoring
+    label: Monitoring
+    description: The ongoing observation or measurement of a condition or process.
+    grounding_terms: [monitoring, monitored]
+    wordnet_synset: monitoring.n.01
+    part_of_speech: noun
+
+  - id: construction
+    label: Construction
+    description: The process of building, assembling, or repairing a structure.
+    grounding_terms: [construction, build, built]
+    wordnet_synset: construction.n.01
+    part_of_speech: noun
+
   - id: state
     label: State
     description: The way something is with respect to its main attributes.
     grounding_terms: [flooded, broken, closed, open, ready, nearby, heavy, state]
     wordnet_synset: state.n.02
+    part_of_speech: noun
+
+  - id: damage
+    label: Damage
+    description: A harmful change that reduces the condition, function, or value of something.
+    grounding_terms: [damage, damaged, crack, eroded]
+    wordnet_synset: damage.n.01
     part_of_speech: noun
 
   - id: attribute
@@ -129,6 +297,13 @@ concepts:
     label: Communication
     description: Something communicated by or to or between people or groups.
     wordnet_synset: communication.n.02
+    part_of_speech: noun
+
+  - id: report
+    label: Report
+    description: A structured account that communicates observations, findings, or recommendations.
+    grounding_terms: [report]
+    wordnet_synset: report.n.02
     part_of_speech: noun
 
   - id: cognition
@@ -161,19 +336,43 @@ relations:
     label: is a
     description: The source is a kind of, instance of, or specialization of the target.
     wordnet_pointer: hypernymy_hyponymy
+    source_concepts: [
+      abstraction, physical_entity, person, group, team, organization,
+      location, village, city, laboratory, park, artifact, bridge, road,
+      shelter, vehicle, sensor, natural_object, river, animal, plant, crop,
+      substance, soil, water, food, event, storm, flood, drought, wildfire,
+      harvest_event, act, process, inspection, evacuation, monitoring,
+      construction, state, damage, attribute, communication, report, cognition,
+      time_period, quantity, relation
+    ]
+    target_concepts: [
+      entity, physical_entity, abstraction, person, group, organization,
+      location, artifact, natural_object, animal, plant, substance, food,
+      event, act, process, state, attribute, communication, cognition,
+      time_period, quantity, relation
+    ]
 
   # WordNet part meronymy. Direction: component -> whole.
   - id: part_of
     label: part of
     description: The source is a physical or conceptual component of the target.
     wordnet_pointer: part_meronymy
+    source_concepts: [
+      person, team, organization, artifact, bridge, road, shelter, vehicle,
+      sensor, natural_object, river, animal, plant, crop, substance, soil,
+      water, food, report
+    ]
+    target_concepts: [
+      group, organization, location, village, city, laboratory, park, artifact,
+      bridge, road, shelter, vehicle, natural_object, river, plant, crop, food
+    ]
 
   # WordNet member meronymy. Direction: member -> group/organization.
   - id: member_of
     label: member of
     description: The source is a member of the target group or organization.
     wordnet_pointer: member_meronymy
-    source_concepts: [person, animal, plant, group, organization]
+    source_concepts: [person, animal, plant, group, team, organization]
     target_concepts: [group, organization]
 
   # WordNet substance meronymy. Direction: substance -> whole.
@@ -181,7 +380,7 @@ relations:
     label: made of
     description: The target is made from or contains the source substance.
     wordnet_pointer: substance_meronymy
-    source_concepts: [substance, food]
+    source_concepts: [substance, soil, water, food]
     target_concepts: [physical_entity, artifact, natural_object, animal, plant, food]
 
   # WordNet attribute relation. Direction: entity -> characteristic.
@@ -195,7 +394,7 @@ relations:
     label: located in
     description: The source is located, situated, or takes place in the target location.
     wordnet_pointer: location_extension
-    target_concepts: [location]
+    target_concepts: [location, village, city, laboratory, park]
 
   # WordNet cause pointer. Direction: cause/event/process -> result.
   - id: causes
@@ -203,19 +402,38 @@ relations:
     description: The source produces, brings about, or is responsible for the target.
     grounding_terms: [cause, reduce, change, force, flood, lead, produce, bring]
     wordnet_pointer: cause
-    source_concepts: [event, act, process, state]
-    target_concepts: [event, act, process, state]
+    source_concepts: [
+      event, storm, flood, drought, wildfire, harvest_event,
+      act, process, inspection, evacuation, monitoring, construction,
+      state, damage
+    ]
+    target_concepts: [
+      event, storm, flood, drought, wildfire, harvest_event,
+      act, process, inspection, evacuation, monitoring, construction,
+      state, damage
+    ]
 
   # WordNet verb entailment. Direction: entailing action -> entailed action.
   - id: entails
     label: entails
     description: The source necessarily involves or implies the target.
     wordnet_pointer: entailment
-    source_concepts: [act, process]
-    target_concepts: [act, process]
+    source_concepts: [act, process, inspection, evacuation, monitoring, construction]
+    target_concepts: [act, process, inspection, evacuation, monitoring, construction]
 
   # Broad fallback relation for semantic association not captured above.
   - id: related_to
     label: related to
     description: The source and target have a meaningful semantic association.
     wordnet_pointer: also_see_or_general_semantic_relation
+    # Keep the fallback relation on the broad vocabulary. Fine-grained
+    # concepts still participate through is_a and the typed relations above,
+    # avoiding a quadratic explosion of generic relation questions.
+    source_concepts: [
+      person, group, organization, location, artifact, natural_object,
+      substance, food, event, act, process, state, communication, report
+    ]
+    target_concepts: [
+      person, group, organization, location, artifact, natural_object,
+      substance, food, event, act, process, state, communication, report
+    ]

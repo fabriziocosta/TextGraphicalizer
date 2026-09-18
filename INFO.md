@@ -41,6 +41,22 @@ $$
 Laya does not know that the output should be a graph. The graph structure is
 provided by this project.
 
+## Ontology resolution
+
+The reference [`ontology.yaml`](ontology.yaml) contains 48 concepts. It keeps
+the original broad categories, but adds concrete entities and event/process
+types such as `river`, `bridge`, `shelter`, `storm`, `flood`, `drought`,
+`inspection`, and `evacuation`. This gives Laya more specific questions to
+answer, so a paragraph can represent both a general category and a more useful
+domain entity when the evidence supports both.
+
+The concrete concepts provide `grounding_terms` such as `river` or `flood`.
+These terms do not force a node to be selected; they only make span grounding
+prefer the matching word after Laya and the graph optimizer have selected the
+concept. Generic `related_to` questions are limited to the broad vocabulary so
+the extra concepts improve resolution without creating an unnecessary
+quadratic batch of generic relation questions.
+
 ## Span grounding
 
 The default grounding model is the STS cross-encoder

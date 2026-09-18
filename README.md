@@ -54,16 +54,24 @@ handwritten grounding vocabulary is required. Optional single-word
 `grounding_terms` act as lexical anchors when a generic longer span receives a
 higher raw STS score.
 
-## Initial WordNet ontology
+## Expanded WordNet ontology
 
-The repository includes [`ontology.yaml`](ontology.yaml), an initial
-high-level ontology aligned with Princeton WordNet. It uses broad WordNet
-synsets such as `entity.n.01`, `physical_entity.n.01`, `person.n.01`, and
-`event.n.01`, together with WordNet-inspired relations including `is_a`,
-`part_of`, `member_of`, `made_of`, `causes`, and `entails`.
+The repository includes [`ontology.yaml`](ontology.yaml), a 48-concept
+starter ontology aligned with Princeton WordNet. It keeps broad concepts such
+as `entity`, `physical_entity`, `person`, and `event`, while adding narrower
+entities for places (`village`, `city`, `laboratory`), infrastructure
+(`bridge`, `road`, `shelter`, `vehicle`, `sensor`), nature (`river`, `soil`,
+`water`, `crop`), events (`storm`, `flood`, `drought`, `wildfire`), and
+processes (`inspection`, `evacuation`, `monitoring`, `construction`).
 
-This is intentionally a coarse first pass: WordNet represents distinct senses
-as synsets, so domain-specific work should later add narrower synsets rather
+The narrower concepts make the output more precise: a paragraph can now
+produce `River` alongside the general `Natural object`, or `Flood` alongside
+the general `Event`, when the model finds evidence for both levels. Their
+`grounding_terms` also give span selection a lexical anchor for the concrete
+entity.
+
+This remains an extensible starter ontology: WordNet represents distinct
+senses as synsets, so domain-specific work can add narrower synsets rather
 than treating a word string as one universal concept. See the [Princeton
 WordNet overview](https://wordnet.princeton.edu/) and its documentation of
 semantic relations.
