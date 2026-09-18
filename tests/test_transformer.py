@@ -84,3 +84,33 @@ def test_transform_requires_string(monkeypatch):
     estimator = fitted(monkeypatch)
     with pytest.raises(TypeError):
         estimator.transform(["not a paragraph"])
+
+
+def test_display_is_parameterized_and_returns_matplotlib_objects(monkeypatch):
+    pytest.importorskip("matplotlib")
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    estimator = fitted(monkeypatch)
+    graph = estimator.transform("A causes B.")
+    figure, axes = estimator.display(
+        graph,
+        title="Custom graph",
+        layout="circular",
+        node_size_min=300,
+        node_size_max=800,
+        scale_node_size_by_probability=True,
+        color_by_probability=False,
+        node_color="#2563eb",
+        edge_color="#64748b",
+        scale_edge_width_by_probability=False,
+        show_probabilities=False,
+        show_paragraph=False,
+        show_legend=False,
+        show=False,
+    )
+    assert figure is axes.figure
+    assert axes.get_title().startswith("Custom graph")
+    plt.close(figure)

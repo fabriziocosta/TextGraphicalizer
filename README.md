@@ -7,18 +7,16 @@ decision model and a SciPy mixed-integer optimizer.
 ## Installation
 
 ```bash
-python3.12 -m venv .venv312
-.venv312/bin/python -m pip install -e .
+source ~/.venvs/py312/bin/activate
+python -m pip install -e .
 ```
 
-For the notebook, install the optional Jupyter dependencies and register its
-Python 3.12 kernel:
+For the notebook, install the optional Jupyter dependencies and use the
+existing `py312` kernel:
 
 ```bash
-.venv312/bin/python -m pip install -e ".[notebook]"
-.venv312/bin/python -m ipykernel install --user \
-  --name textgraphicalizer-py312 \
-  --display-name "TextGraphicalizer (Python 3.12)"
+python -m pip install -e ".[notebook]"
+python -m ipykernel install --user --name py312 --display-name "py312"
 ```
 
 The first call to `fit()` downloads the pinned `convaiinnovations/laya`
@@ -76,6 +74,30 @@ print(graph.edges(data=True))
 
 The estimator returns a directed graph. Nodes and edges contain `label`,
 `probability`, and, when available, Laya's distinct `confidence` value.
+
+## Rendering graphs
+
+`TextGraphicalizer.display()` renders any resulting graph and returns its
+Matplotlib `(figure, axes)` pair. Rendering options can be tuned without
+duplicating visualization code:
+
+```python
+figure, axes = extractor.display(
+    graph,
+    layout="circular",          # spring, circular, shell, kamada_kawai, or callable
+    node_size=1400,
+    node_color="#7c3aed",
+    node_cmap="viridis",
+    edge_cmap="plasma",
+    color_by_probability=True,
+    scale_node_size_by_probability=True,
+    scale_edge_width_by_probability=True,
+    show_probabilities=True,
+    show=False,                  # useful when composing several plots
+)
+```
+
+Pass `text="..."` instead of `graph` to transform and render in one call.
 
 ## Model smoke test
 
