@@ -45,7 +45,45 @@ def fitted(monkeypatch, **params):
         "textgraphicalizer.transformer.LayaBackend.load",
         lambda self: FakeBackend(),
     )
-    return TextGraphicalizer(ONTOLOGY, **params).fit()
+    return TextGraphicalizer(ONTOLOGY, **params).fit().load_model()
+
+
+def test_fit_does_not_load_model(monkeypatch):
+    calls = []
+
+    def load(self):
+        calls.append(self)
+        return FakeBackend()
+
+    monkeypatch.setattr("textgraphicalizer.transformer.LayaBackend.load", load)
+    estimator = TextGraphicalizer(ONTOLOGY).fit()
+    assert calls == []
+    with pytest.raises(RuntimeError, match="Call load_model\(\)"):
+        estimator.transform("A causes B.")
+
+
+def test_load_model_is_explicit_and_idempotent(monkeypatch):
+    calls = []
+
+    def load(self):
+        calls.append(self)
+        return FakeBackend()
+
+    monkeypatch.setattr("textgraphicalizer.transformer.LayaBackend.load", load)
+    estimator = TextGraphicalizer(ONTOLOGY).fit()
+    assert estimator.load_model() is estimator
+    assert estimator.load_model() is estimator
+    assert len(calls) == 1
+
+
+def test_load_model_can_be_called_without_fit(monkeypatch):
+    monkeypatch.setattr(
+        "textgraphicalizer.transformer.LayaBackend.load",
+        lambda self: FakeBackend(),
+    )
+    estimator = TextGraphicalizer(ONTOLOGY).load_model()
+    graph = estimator.transform("A causes B.")
+    assert set(graph.nodes) == {"a", "b"}
 
 
 def test_transform_returns_graph_with_evidence(monkeypatch):
@@ -55,7 +93,17 @@ def test_transform_returns_graph_with_evidence(monkeypatch):
     assert graph.nodes["a"]["probability"] == 0.9
     assert graph.edges["a", "b"]["label"] == "causes"
     assert graph.edges["a", "b"]["probability"] == pytest.approx(0.8)
+    assert graph.edges["a", "b"]["existence_probability"] == pytest.approx(0.8)
+    assert graph.edges["a", "b"]["relation_probability"] == pytest.approx(0.8)
     assert graph.graph["input_truncated"] is False
+
+
+def test_transform_sequence_returns_graphs(monkeypatch):
+    estimator = fitted(monkeypatch)
+    graphs = estimator.transform(["A causes B.", "B causes A."])
+    assert isinstance(graphs, list)
+    assert len(graphs) == 2
+    assert all(graph.is_directed() for graph in graphs)
 
 
 def test_relation_questions_are_domain_filtered(monkeypatch):

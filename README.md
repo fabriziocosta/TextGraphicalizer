@@ -19,10 +19,11 @@ python -m pip install -e ".[notebook]"
 python -m ipykernel install --user --name py312 --display-name "py312"
 ```
 
-The first call to `fit()` downloads the pinned `convaiinnovations/laya`
-checkpoint into the standard Hugging Face cache. The model weights are not
-stored in this repository. To run offline, pass a previously downloaded
-snapshot with `model_path`.
+`fit()` validates the ontology without loading model weights. Call
+`load_model()` explicitly to initialize Laya; this may download the pinned
+`convaiinnovations/laya` checkpoint into the standard Hugging Face cache. The
+model weights are not stored in this repository. To run offline, pass a
+previously downloaded snapshot with `model_path`.
 
 ## Ontology
 
@@ -65,6 +66,7 @@ from textgraphicalizer import TextGraphicalizer
 graph = (
     TextGraphicalizer("ontology.yaml", connected=False)
     .fit()
+    .load_model()
     .transform("An infection caused the patient to develop a fever.")
 )
 
@@ -86,7 +88,6 @@ figure, axes = extractor.display(
     graph,
     layout="circular",          # spring, circular, shell, kamada_kawai, or callable
     node_size=1400,
-    node_color="#7c3aed",
     node_cmap="viridis",
     edge_cmap="plasma",
     color_by_probability=True,

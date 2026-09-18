@@ -31,6 +31,8 @@ class LayaBackend:
         self.effective_model_revision: str | None = model_revision
 
     def load(self) -> "LayaBackend":
+        if self.agent is not None:
+            return self
         try:
             import laya
         except ImportError as exc:

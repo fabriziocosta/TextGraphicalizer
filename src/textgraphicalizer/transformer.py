@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -65,13 +66,35 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         del X, y
         self._validate_parameters()
         self.ontology_ = load_ontology(self.ontology)
+        # ``fit`` validates/configures the estimator. Model weights are
+        # intentionally loaded only by the explicit ``load_model`` method.
+        self._model_loaded_ = False
+        if hasattr(self, "backend_"):
+            del self.backend_
+        self.n_features_in_ = 1
+        return self
+
+    def load_model(self) -> "TextGraphicalizer":
+        """Load Laya and return this estimator.
+
+        Loading is explicit because it may download a large checkpoint and
+        initialize a device-specific runtime. This method can be called after
+        ``fit()`` or directly on a newly-created estimator. Repeated calls are
+        idempotent for this estimator instance.
+        """
+        self._validate_parameters()
+        if not hasattr(self, "ontology_"):
+            self.ontology_ = load_ontology(self.ontology)
+            self.n_features_in_ = 1
+        if getattr(self, "_model_loaded_", False):
+            return self
         self.backend_ = LayaBackend(
             model_id=self.model_id,
             model_path=self.model_path,
             model_revision=self.model_revision,
             device=self.device,
         ).load()
-        self.n_features_in_ = 1
+        self._model_loaded_ = True
         return self
 
     def _node_questions(self) -> dict[str, dict[str, Any]]:
@@ -86,11 +109,8 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             for index, concept in enumerate(self.ontology_.concepts)
         }
 
-    def transform(self, text: str) -> nx.DiGraph:
-        check_is_fitted(self, ["ontology_", "backend_"])
-        if not isinstance(text, str):
-            raise TypeError("transform() expects one paragraph as a string")
-
+    def _transform_one(self, text: str) -> nx.DiGraph:
+        """Transform one paragraph after readiness checks have completed."""
         node_questions = self._node_questions()
         node_result = self.backend_.predict(text, node_questions)
         node_answers = node_result.get("answers", {})
@@ -112,7 +132,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
 
         edge_questions: dict[str, dict[str, Any]] = {}
         pair_map: dict[str, tuple[str, str]] = {}
-        for pair_index, source in enumerate(candidate_nodes):
+        for source in candidate_nodes:
             for target in candidate_nodes:
                 if source.concept_id == target.concept_id:
                     continue
@@ -156,14 +176,15 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             if not relation_probabilities:
                 continue
             relation_id = max(relation_probabilities, key=relation_probabilities.get)
-            edge_probability = max(0.0, min(1.0, 1.0 - no_relation_probability))
+            existence_probability = max(0.0, min(1.0, 1.0 - no_relation_probability))
             candidate_edges.append(
                 EdgeEvidence(
                     source=source_id,
                     target=target_id,
                     label=relation_by_id[relation_id].label,
-                    probability=edge_probability,
+                    probability=existence_probability,
                     confidence=_confidence(answer),
+                    relation_probability=relation_probabilities[relation_id],
                 )
             )
 
@@ -191,6 +212,25 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             }
         )
         return graph
+
+    def transform(self, text: str | Sequence[str]) -> nx.DiGraph | list[nx.DiGraph]:
+        """Transform one paragraph or a sequence of paragraphs.
+
+        A single string returns one ``DiGraph``. A sequence of strings returns
+        a list of graphs in the same order as the input.
+        """
+        check_is_fitted(self, ["ontology_"])
+        if not getattr(self, "_model_loaded_", False):
+            raise RuntimeError(
+                "The Laya model is not loaded. Call load_model() before transform()."
+            )
+        if not isinstance(text, str):
+            if not isinstance(text, Sequence):
+                raise TypeError("transform() expects a string or a sequence of strings")
+            if not all(isinstance(item, str) for item in text):
+                raise TypeError("transform() sequences must contain only strings")
+            return [self._transform_one(item) for item in text]
+        return self._transform_one(text)
 
     def display(
         self,
@@ -371,9 +411,10 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                 edge_labels=edge_labels,
                 ax=axes,
                 font_size=8,
+                font_color="black",
                 rotate=False,
                 label_pos=0.52,
-                bbox={"facecolor": "#fff7ed", "edgecolor": "#fed7aa", "alpha": 0.92, "pad": 2},
+                bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.92, "pad": 2},
             )
 
         graph_title = title or "TextGraphicalizer graph"
@@ -413,6 +454,5 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
     def fit_transform(self, X: Any = None, y: Any = None, **fit_params: Any) -> nx.DiGraph:
         del fit_params
         self.fit(X, y)
-        if not isinstance(X, str):
-            raise TypeError("fit_transform() expects one paragraph as a string")
+        self.load_model()
         return self.transform(X)
