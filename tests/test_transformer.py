@@ -179,7 +179,7 @@ def test_grounding_uses_single_non_stopwords_for_selected_items(monkeypatch):
     grounding_questions = estimator.backend_.grounding_questions
     assert len(grounding_questions) == 3
     assert all(
-        list(question["criteria"]) == ["word_1", "word_2", "word_4"]
+        list(question["criteria"]) == ["word_1", "word_2", "word_4", "none"]
         for question in grounding_questions
     )
 
@@ -193,6 +193,34 @@ def test_grounding_loads_stopwords_from_external_yaml(monkeypatch, tmp_path):
 
     assert graph.graph["grounding_candidate_words"] == ["infection", "a", "fever"]
     assert graph.graph["stopwords_path"] == str(stopwords_path)
+
+
+def test_grounding_can_leave_an_item_without_a_direct_word():
+    graph = nx.DiGraph()
+    graph.add_node("a", label="Event")
+    graph.add_edge("a", "b", label="causes")
+    question_map = {
+        "ground_node_0": ("node", "a"),
+        "ground_edge_0": ("edge", ("a", "b")),
+    }
+    answers = {
+        "ground_node_0": {
+            "probabilities": {"word_0": 0.2, "none": 0.8},
+        },
+        "ground_edge_0": {
+            "probabilities": {"word_0": 0.7, "none": 0.3},
+        },
+    }
+
+    TextGraphicalizer._apply_grounding(
+        graph,
+        answers,
+        question_map,
+        [(0, "program")],
+    )
+
+    assert graph.nodes["a"]["word"] is None
+    assert graph.edges["a", "b"]["word"] == "program"
 
 
 def test_transform_sequence_returns_graphs(monkeypatch):

@@ -99,7 +99,8 @@ this choice set using [`stopwords.yaml`](stopwords.yaml), while the complete
 sentence is still passed to Laya. Supply `stopwords_path=...` to use another
 YAML file. The result is stored as `word`, `word_index`, and
 `word_probability` on the corresponding node or edge. Selection is direct
-argmax over Laya's word probabilities; no additional optimizer is used.
+argmax over Laya's word probabilities, with `word=None` when no candidate
+directly expresses the item; no additional optimizer is used.
 The checked-in default is derived from the [Snowball English stopword
 list](https://snowballstem.org/algorithms/english/stop.txt).
 

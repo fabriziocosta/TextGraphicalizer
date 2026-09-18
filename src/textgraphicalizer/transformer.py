@@ -145,20 +145,30 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         words: Sequence[tuple[int, str]],
     ) -> tuple[dict[str, dict[str, Any]], dict[str, tuple[str, str | tuple[str, str]]]]:
         """Build one choice question per selected node and edge."""
-        criteria = self._word_criteria(words)
+        word_criteria = self._word_criteria(words)
         questions: dict[str, dict[str, Any]] = {}
         question_map: dict[str, tuple[str, str | tuple[str, str]]] = {}
 
         for index, node_id in enumerate(graph.nodes):
             question_id = f"ground_node_{index}"
             label = graph.nodes[node_id].get("label", node_id)
+            concept = self.ontology_.concept_by_id.get(str(node_id))
+            description = (
+                f" Concept description: {concept.description}"
+                if concept is not None
+                else ""
+            )
             questions[question_id] = {
                 "type": "choice",
                 "instructions": (
-                    f'Which single word in this sentence best expresses the '
-                    f'concept "{label}"?'
+                    f'Which single word, if any, explicitly names the concept '
+                    f'"{label}"? Choose "none" when no word directly names '
+                    f"the concept; do not choose a generic associated word.{description}"
                 ),
-                "criteria": criteria,
+                "criteria": {
+                    **word_criteria,
+                    "none": "No single word directly names this concept.",
+                },
             }
             question_map[question_id] = ("node", str(node_id))
 
@@ -167,14 +177,31 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             source_label = graph.nodes[source].get("label", source)
             target_label = graph.nodes[target].get("label", target)
             relation_label = data.get("label", "relation")
+            relation = next(
+                (
+                    candidate
+                    for candidate in self.ontology_.relations
+                    if candidate.label == relation_label
+                ),
+                None,
+            )
+            description = (
+                f" Relation description: {relation.description}"
+                if relation is not None
+                else ""
+            )
             questions[question_id] = {
                 "type": "choice",
                 "instructions": (
-                    f'Which single word in this sentence best expresses the '
+                    f'Which single word, if any, explicitly expresses the '
                     f'relation "{relation_label}" from "{source_label}" '
-                    f'to "{target_label}"?'
+                    f'to "{target_label}"? Choose "none" when the relation '
+                    f"is only inferred; do not choose a concept word.{description}"
                 ),
-                "criteria": criteria,
+                "criteria": {
+                    **word_criteria,
+                    "none": "No single word directly expresses this relation.",
+                },
             }
             question_map[question_id] = ("edge", (str(source), str(target)))
 
@@ -201,19 +228,26 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             available = {
                 key: float(probability)
                 for key, probability in probabilities.items()
-                if key in candidate_keys
+                if key in candidate_keys or key == "none"
             }
             if not available:
                 raise ValueError(
                     f"Laya response for {question_id} lacks probabilities for candidate words"
                 )
             best_key = max(available, key=available.get)
-            word_index, word = candidate_keys[best_key]
-            attributes = {
-                "word": word,
-                "word_index": word_index,
-                "word_probability": available[best_key],
-            }
+            if best_key == "none":
+                attributes = {
+                    "word": None,
+                    "word_index": None,
+                    "word_probability": available[best_key],
+                }
+            else:
+                word_index, word = candidate_keys[best_key]
+                attributes = {
+                    "word": word,
+                    "word_index": word_index,
+                    "word_probability": available[best_key],
+                }
             if kind == "node":
                 graph.nodes[target].update(attributes)  # type: ignore[index]
             else:
@@ -610,9 +644,6 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                 edge_cmap=edge_color_map if color_by_probability else None,
                 edge_vmin=0.0 if color_by_probability else None,
                 edge_vmax=1.0 if color_by_probability else None,
-                connectionstyle=connectionstyle,
-                min_source_margin=14,
-                min_target_margin=18,
             )
         if directed_edges:
             nx.draw_networkx_edges(
