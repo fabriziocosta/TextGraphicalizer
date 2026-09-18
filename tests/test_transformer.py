@@ -295,6 +295,20 @@ def test_span_grounding_attaches_offsets_and_top_candidates(monkeypatch):
     assert captured[0][2]["a"].label == "A"
 
 
+def test_span_grounding_uses_ontology_terms_to_break_generic_score_ties():
+    scores = {
+        "event": [
+            SpanScore("to move residents", 10, 13, 0.90),
+            SpanScore("storm", 3, 4, 0.21),
+        ]
+    }
+
+    result = TextGraphicalizer._best_spans(scores, {"event": ("storm",)})
+
+    assert result["event"]["span"] == "storm"
+    assert result["event"]["span_score"] == pytest.approx(0.21)
+
+
 def test_weak_or_ambiguous_grounding_is_left_unattached():
     scores = {
         "node": [

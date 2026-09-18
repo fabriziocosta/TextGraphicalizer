@@ -65,6 +65,12 @@ exclusive. For example, `crop failure` can be stored as `start_word=5` and
 `end_word=7`. Stopwords are not removed from candidate generation because the
 surrounding sentence is part of the evidence.
 
+An ontology can optionally provide single-word `grounding_terms` for a concept
+or relation. These are lexical anchors, not replacements for model scoring:
+when a candidate exactly matches an anchor (including a simple inflection), it
+is preferred over a generic longer phrase that the STS model may otherwise
+rank highly because it contains more of the unchanged paragraph.
+
 Selected graph nodes and edges expose:
 
 ```python
