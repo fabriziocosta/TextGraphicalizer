@@ -134,6 +134,13 @@ such as `river`, `storm`, or `flooded` provides a precise one-word anchor when
 the ontology author has supplied one; the model scores and full diagnostics
 are still retained for inspection.
 
+Relation spans use the same rule, with the relation label itself also acting
+as a phrase anchor when no explicit `grounding_terms` are configured. If the
+paragraph contains no matching relation expression, no span is attached to
+the edge; the ontology relation label remains visible. This prevents an
+unrelated high-scoring paragraph phrase from being presented as evidence for
+every edge.
+
 ## Laya's basic vocabulary
 
 ### State

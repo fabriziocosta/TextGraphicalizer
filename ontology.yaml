@@ -201,7 +201,7 @@ relations:
   - id: causes
     label: causes
     description: The source produces, brings about, or is responsible for the target.
-    grounding_terms: [cause, force, flood, lead, produce, bring]
+    grounding_terms: [cause, reduce, change, force, flood, lead, produce, bring]
     wordnet_pointer: cause
     source_concepts: [event, act, process, state]
     target_concepts: [event, act, process, state]

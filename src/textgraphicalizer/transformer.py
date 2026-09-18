@@ -196,7 +196,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         if hasattr(self.grounding_backend_, "score_spans"):
             candidates = self.grounding_backend_.generate_candidates(text)
             scores = self.grounding_backend_.score_spans(text, candidates, relations_by_edge)
-            return self._best_spans(scores, grounding_terms_by_edge)
+            return self._best_spans(scores, grounding_terms_by_edge, require_anchor=True)
         if not words:
             return {}
         legacy_targets = {
@@ -215,6 +215,8 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         cls,
         scores: Mapping[Any, Sequence[SpanScore]],
         preferred_terms: Mapping[Any, Sequence[str]] | None = None,
+        *,
+        require_anchor: bool = False,
     ) -> dict[Any, dict[str, Any]]:
         """Attach the best span and a ranked diagnostic shortlist.
 
@@ -234,9 +236,10 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             anchored = [
                 candidate
                 for candidate in score_ranked
-                if candidate.end_word - candidate.start_word == 1
-                and any(cls._grounding_term_matches(candidate.text, term) for term in terms)
+                if any(cls._grounding_span_matches(candidate, term) for term in terms)
             ]
+            if require_anchor and not anchored:
+                continue
             if anchored:
                 term_order = {
                     candidate: min(
@@ -282,6 +285,16 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                     }
                 )
         return best
+
+    @classmethod
+    def _grounding_span_matches(cls, candidate: SpanScore, term: str) -> bool:
+        """Match a one-word anchor or an explicitly configured phrase anchor."""
+        if len(term.split()) > 1:
+            return candidate.text.casefold() == term.casefold()
+        return (
+            candidate.end_word - candidate.start_word == 1
+            and cls._grounding_term_matches(candidate.text, term)
+        )
 
     @staticmethod
     def _grounding_term_matches(word: str, term: str) -> bool:
@@ -574,13 +587,21 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         edge_descriptions = {
             (str(source), str(target)): ConceptDescription(
                 label=relation_by_label[data["label"]].label,
-                description=relation_by_label[data["label"]].description,
+                description=(
+                    f"{relation_by_label[data['label']].description} "
+                    f"This relation is from the concept "
+                    f"\"{graph.nodes[source]['label']}\" to the concept "
+                    f"\"{graph.nodes[target]['label']}\"."
+                ),
             )
             for source, target, data in graph.edges(data=True)
             if data.get("label") in relation_by_label
         }
         edge_grounding_terms = {
-            (str(source), str(target)): relation_by_label[data["label"]].grounding_terms
+            (str(source), str(target)): (
+                relation_by_label[data["label"]].grounding_terms
+                or (relation_by_label[data["label"]].label,)
+            )
             for source, target, data in graph.edges(data=True)
             if data.get("label") in relation_by_label
         }

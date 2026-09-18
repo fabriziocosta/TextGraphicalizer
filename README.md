@@ -111,7 +111,10 @@ cross-encoder, then attaches the highest-scoring span as `span`, `span_start`,
 `grounding_candidates` for diagnostics. Single-word winners also populate the
 backward-compatible `word`, `word_index`, and `word_score` fields. The STS
 score is a ranking compatibility score, not a calibrated probability; set
-`grounding_model_id=...` to try another cross-encoder checkpoint.
+`grounding_model_id=...` to try another cross-encoder checkpoint. Relation
+spans are attached only when a relation term or relation-label phrase occurs
+in the paragraph; otherwise the edge retains its ontology label without a
+misleading span.
 
 ## Rendering graphs
 

@@ -309,6 +309,28 @@ def test_span_grounding_uses_ontology_terms_to_break_generic_score_ties():
     assert result["event"]["span_score"] == pytest.approx(0.21)
 
 
+def test_relation_span_requires_a_relation_anchor():
+    scores = {
+        ("a", "b"): [
+            SpanScore("repeated drought reduced", 0, 3, 0.90),
+            SpanScore("reduced", 2, 3, 0.20),
+        ]
+    }
+
+    assert TextGraphicalizer._best_spans(
+        scores,
+        {("a", "b"): ()},
+        require_anchor=True,
+    ) == {}
+    result = TextGraphicalizer._best_spans(
+        scores,
+        {("a", "b"): ("reduce",)},
+        require_anchor=True,
+    )
+
+    assert result[("a", "b")]["span"] == "reduced"
+
+
 def test_weak_or_ambiguous_grounding_is_left_unattached():
     scores = {
         "node": [
