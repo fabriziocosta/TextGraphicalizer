@@ -13,10 +13,14 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils.validation import check_is_fitted
 
 from .laya_backend import LayaBackend
-from .nli_backend import NliGroundingBackend
 from .ontology import Ontology, load_ontology
 from .optimizer import EdgeEvidence, NodeEvidence, select_graph, select_graph_by_threshold
+from .span_backend import ConceptDescription, SpanGroundingBackend, SpanScore
 from .stopwords import DEFAULT_STOPWORDS_PATH, load_stopwords
+
+# Kept as a module-level compatibility name for callers/tests that used the
+# old grounding backend's patch point.  The implementation is now span-based.
+NliGroundingBackend = SpanGroundingBackend
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +38,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
 
     _MIN_GROUNDING_SCORE = 0.2
     _MIN_GROUNDING_MARGIN = 0.1
+    _GROUNDING_TOP_K = 5
 
     def __init__(
         self,
@@ -48,7 +53,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         connected: bool = False,
         max_node_degree: int | None = None,
         stopwords_path: str | Path | None = None,
-        grounding_model_id: str = "cross-encoder/nli-distilroberta-base",
+        grounding_model_id: str = "cross-encoder/stsb-distilroberta-base",
     ) -> None:
         self.ontology = ontology
         self.model_id = model_id
@@ -117,7 +122,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             model_revision=self.model_revision,
             device=self.device,
         ).load()
-        self.grounding_backend_: NliGroundingBackend = NliGroundingBackend(
+        self.grounding_backend_: Any = SpanGroundingBackend(
             model_id=self.grounding_model_id,
             device=self.device,
         ).load()
@@ -150,15 +155,31 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         text: str,
         words: Sequence[tuple[int, str]],
         graph: nx.DiGraph,
-        concepts_by_node: Mapping[str, str],
+        concepts_by_node: Mapping[str, Any],
         grounding_terms_by_node: Mapping[str, Sequence[str]] | None = None,
     ) -> dict[str, dict[str, Any]]:
-        """Ground selected nodes by NLI entailment probability."""
-        if not words or graph.number_of_nodes() == 0 or not concepts_by_node:
+        """Ground selected nodes with the span backend.
+
+        The legacy word backend shape is still accepted for lightweight
+        downstream test doubles, but production instances use ``score_spans``.
+        """
+        if graph.number_of_nodes() == 0 or not concepts_by_node:
             return {}
-        scores = self.grounding_backend_.score_words_contrastive(
-            text, words, concepts_by_node
-        )
+        if hasattr(self.grounding_backend_, "score_spans"):
+            candidates = self.grounding_backend_.generate_candidates(text)
+            scores = self.grounding_backend_.score_spans(text, candidates, concepts_by_node)
+            return self._best_spans(scores)
+        if not words:
+            return {}
+        legacy_targets = {
+            target: (
+                value
+                if isinstance(value, str)
+                else f"Concept: {value.label}\nDescription: {value.description}"
+            )
+            for target, value in concepts_by_node.items()
+        }
+        scores = self.grounding_backend_.score_words_contrastive(text, words, legacy_targets)
         return self._best_nli_words(scores, grounding_terms_by_node)
 
     def _edge_words_by_nli(
@@ -166,16 +187,65 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         text: str,
         words: Sequence[tuple[int, str]],
         graph: nx.DiGraph,
-        relations_by_edge: Mapping[tuple[str, str], str],
+        relations_by_edge: Mapping[tuple[str, str], Any],
         grounding_terms_by_edge: Mapping[tuple[str, str], Sequence[str]] | None = None,
     ) -> dict[tuple[str, str], dict[str, Any]]:
-        """Ground selected edges by NLI entailment probability."""
-        if not words or graph.number_of_edges() == 0 or not relations_by_edge:
+        """Ground selected edges with the span backend."""
+        if graph.number_of_edges() == 0 or not relations_by_edge:
             return {}
-        scores = self.grounding_backend_.score_words_contrastive(
-            text, words, relations_by_edge
-        )
+        if hasattr(self.grounding_backend_, "score_spans"):
+            candidates = self.grounding_backend_.generate_candidates(text)
+            scores = self.grounding_backend_.score_spans(text, candidates, relations_by_edge)
+            return self._best_spans(scores)
+        if not words:
+            return {}
+        legacy_targets = {
+            target: (
+                value
+                if isinstance(value, str)
+                else f"Concept: {value.label}\nDescription: {value.description}"
+            )
+            for target, value in relations_by_edge.items()
+        }
+        scores = self.grounding_backend_.score_words_contrastive(text, words, legacy_targets)
         return self._best_nli_words(scores, grounding_terms_by_edge)
+
+    @classmethod
+    def _best_spans(
+        cls,
+        scores: Mapping[Any, Sequence[SpanScore]],
+    ) -> dict[Any, dict[str, Any]]:
+        """Attach the best span and a ranked diagnostic shortlist."""
+        best: dict[Any, dict[str, Any]] = {}
+        for target, candidates in scores.items():
+            ranked = sorted(candidates, key=lambda candidate: candidate.score, reverse=True)
+            if not ranked:
+                continue
+            winner = ranked[0]
+            best[target] = {
+                "span": winner.text,
+                "span_start": winner.start_word,
+                "span_end": winner.end_word,
+                "span_score": winner.score,
+                "grounding_candidates": [
+                    {
+                        "span": candidate.text,
+                        "start_word": candidate.start_word,
+                        "end_word": candidate.end_word,
+                        "score": candidate.score,
+                    }
+                    for candidate in ranked[:cls._GROUNDING_TOP_K]
+                ],
+            }
+            if winner.end_word - winner.start_word == 1:
+                best[target].update(
+                    {
+                        "word": winner.text,
+                        "word_index": winner.start_word,
+                        "word_score": winner.score,
+                    }
+                )
+        return best
 
     @staticmethod
     def _grounding_term_matches(word: str, term: str) -> bool:
@@ -215,7 +285,9 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             }
             preferred = [candidate for candidate in candidates if term_matches[candidate] is not None]
             if preferred:
-                best_term_index = min(term_matches[candidate] for candidate in preferred)
+                best_term_index = min(
+                    index for index in term_matches.values() if index is not None
+                )
                 preferred = [
                     candidate
                     for candidate in preferred
@@ -278,6 +350,13 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
 
             collapsed_pairs.add(pair)
             merged = dict(data)
+            reverse_span = reverse_data.get("span")
+            span = data.get("span")
+            spans = list(dict.fromkeys(
+                str(value) for value in (span, reverse_span) if value is not None
+            ))
+            if spans:
+                merged["span"] = " / ".join(spans)
             reverse_word = reverse_data.get("word")
             word = data.get("word")
             words = list(dict.fromkeys(
@@ -300,8 +379,9 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
     @staticmethod
     def _node_display_label(node: Any, data: Mapping[str, Any], show_probabilities: bool) -> str:
         parts = [str(data.get("label", node))]
-        if data.get("word") is not None:
-            parts.append(str(data["word"]))
+        grounding = data.get("span", data.get("word"))
+        if grounding is not None:
+            parts.append(str(grounding))
         if show_probabilities:
             parts.append(f"{float(data.get('probability', 0.0)):.2f}")
         return "\n".join(parts)
@@ -311,8 +391,9 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         parts = []
         if data.get("label") is not None:
             parts.append(str(data["label"]))
-        if data.get("word") is not None:
-            parts.append(str(data["word"]))
+        grounding = data.get("span", data.get("word"))
+        if grounding is not None:
+            parts.append(str(grounding))
         if show_probabilities:
             parts.append(f"{float(data.get('probability', 0.0)):.2f}")
         return "\n".join(parts)
@@ -432,10 +513,9 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
 
         concept_by_id = self.ontology_.concept_by_id
         node_descriptions = {
-            str(node): (
-                f'The paragraph expresses the concept '
-                f'"{graph.nodes[node]["label"]}". '
-                f"{concept_by_id[node].description}"
+            str(node): ConceptDescription(
+                label=concept_by_id[node].label,
+                description=concept_by_id[node].description,
             )
             for node in graph.nodes
             if node in concept_by_id
@@ -456,11 +536,9 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
 
         relation_by_label = {relation.label: relation for relation in relation_by_id.values()}
         edge_descriptions = {
-            (str(source), str(target)): (
-                f'The paragraph explicitly expresses the relation '
-                f'"{data["label"]}" from "{graph.nodes[source]["label"]}" '
-                f'to "{graph.nodes[target]["label"]}". '
-                f"{relation_by_label[data['label']].description}"
+            (str(source), str(target)): ConceptDescription(
+                label=relation_by_label[data["label"]].label,
+                description=relation_by_label[data["label"]].description,
             )
             for source, target, data in graph.edges(data=True)
             if data.get("label") in relation_by_label
@@ -478,6 +556,10 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             edge_grounding_terms,
         )
         self._attach_edge_words(graph, edge_words)
+        span_backend = hasattr(self.grounding_backend_, "generate_candidates")
+        candidate_spans = (
+            self.grounding_backend_.generate_candidates(text) if span_backend else []
+        )
         graph.graph.update(
             {
                 "ontology_version": self.ontology_.version,
@@ -491,19 +573,24 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                 "connected": self.connected,
                 "max_node_degree": self.max_node_degree,
                 "solver": "scipy.optimize.milp" if self.use_milp else "thresholds",
-                "grounding_stopwords_removed": True,
+                "grounding_stopwords_removed": not span_backend,
                 "stopwords_path": str(
                     self.stopwords_path or DEFAULT_STOPWORDS_PATH
                 ),
                 "stopwords_count": len(self.stopwords_),
-                "grounding_candidate_words": [word for _, word in content_words],
-                "grounding_method": "nli_contrastive_entailment",
-                "grounding_model_id": self.grounding_model_id,
-                "grounding_min_score": self._MIN_GROUNDING_SCORE,
-                "grounding_min_margin": self._MIN_GROUNDING_MARGIN,
-                "grounding_candidate_context_radius": getattr(
-                    self.grounding_backend_, "candidate_context_radius", None
+                "grounding_candidate_words": [
+                    word for _, word in content_words
+                ] if not span_backend else _WORD_RE.findall(text),
+                "grounding_candidate_spans": [
+                    candidate.text for candidate in candidate_spans
+                ],
+                "grounding_method": (
+                    "cross_encoder_span_similarity"
+                    if span_backend
+                    else "nli_contrastive_entailment"
                 ),
+                "grounding_model_id": self.grounding_model_id,
+                "grounding_top_k": self._GROUNDING_TOP_K,
                 "input_truncated": self.backend_.was_truncated(
                     text,
                     {

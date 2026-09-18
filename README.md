@@ -19,11 +19,13 @@ python -m pip install -e ".[notebook]"
 python -m ipykernel install --user --name py312 --display-name "py312"
 ```
 
-Constructing `TextGraphicalizer` initializes Laya and the NLI grounding model;
+Constructing `TextGraphicalizer` initializes Laya and the span-grounding
+cross-encoder;
 this may download both checkpoints into the standard Hugging Face cache.
 `.load_model()` remains available and idempotent. The model weights are not
 stored in this repository. To run offline, pass a previously downloaded Laya
-snapshot with `model_path` and ensure the configured NLI checkpoint is cached.
+snapshot with `model_path` and ensure the configured span-grounding checkpoint
+is cached.
 
 By default, graph selection uses the MILP optimizer. Set `use_milp=False` to
 select nodes with `node_threshold` and edges with `edge_threshold` directly;
@@ -47,8 +49,8 @@ relations:
 ```
 
 Relations may optionally specify `source_concepts` and `target_concepts`.
-Concepts and relations may also specify a single-word `grounding_terms` list;
-these terms are preferred when attaching sentence words to graph items.
+The span grounder uses the ontology label and description directly, so no
+handwritten grounding vocabulary is required.
 
 ## Initial WordNet ontology
 
@@ -72,7 +74,7 @@ from textgraphicalizer import TextGraphicalizer
 extractor = TextGraphicalizer(
     ontology="ontology.yaml",
     stopwords_path="stopwords.yaml",
-    grounding_model_id="cross-encoder/nli-distilroberta-base",
+    grounding_model_id="cross-encoder/stsb-distilroberta-base",
     connected=False,
 )
 graph = extractor.fit_transform("An infection caused the patient to develop a fever.")
@@ -99,23 +101,15 @@ full Laya sequence for every node and relation question, including question
 instructions, relation options, special tokens, and the configured 512-token
 budget—not against the paragraph token count alone.
 
-For candidate nodes and selected edges, TextGraphicalizer uses an NLI
-cross-encoder. It tests a concept or relation hypothesis against the full
-paragraph and after removing each exact candidate word occurrence. The
-associated word is the candidate with the largest drop in entailment
-probability; the candidate word is deliberately not included in the hypothesis
-itself, which avoids selecting words merely because they have been copied into
-the NLI hypothesis. Each candidate is evaluated in a local five-word-radius
-context so a globally salient noun does not get assigned to every node. Long
-paragraphs are evaluated with overlapping context windows. Stopwords are removed from this choice set using
-[`stopwords.yaml`](stopwords.yaml); supply `stopwords_path=...` to use another
-YAML file. The result is stored as `word`, `word_index`, and `word_score` on
-the corresponding node or edge only when the attribution score is strong and
-has a clear margin over the next candidate; otherwise no word is attached. Set
-`grounding_model_id=...` to use another
-Hugging Face NLI checkpoint.
-The checked-in default is derived from the [Snowball English stopword
-list](https://snowballstem.org/algorithms/english/stop.txt).
+For each selected node and edge, TextGraphicalizer generates every contiguous
+one-, two-, and three-word span without removing stopwords. It sends the
+ontology query and a marked sentence context to the same Sentence Transformers
+cross-encoder, then attaches the highest-scoring span as `span`, `span_start`,
+`span_end`, and `span_score`. The top five candidates are retained in
+`grounding_candidates` for diagnostics. Single-word winners also populate the
+backward-compatible `word`, `word_index`, and `word_score` fields. The STS
+score is a ranking compatibility score, not a calibrated probability; set
+`grounding_model_id=...` to try another cross-encoder checkpoint.
 
 ## Rendering graphs
 
@@ -125,7 +119,7 @@ duplicating visualization code:
 
 When reciprocal edges have the same relation label, the renderer displays
 them as one undirected edge. Node and edge annotations include both the
-ontology/relation label and the associated sentence word.
+ontology/relation label and the associated sentence span.
 
 The default layout is `kamada_kawai`.
 

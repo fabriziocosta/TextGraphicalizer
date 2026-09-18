@@ -7,6 +7,7 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 
 from .hf_quiet import silence_model_download_output
+from .span_backend import ConceptDescription, Span, SpanGroundingBackend, SpanScore  # noqa: F401
 
 
 class NliGroundingBackend:

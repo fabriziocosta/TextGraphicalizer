@@ -2,6 +2,7 @@ import networkx as nx
 import pytest
 
 from textgraphicalizer import TextGraphicalizer
+from textgraphicalizer.span_backend import Span, SpanScore
 
 ONTOLOGY = {
     "version": 1,
@@ -231,7 +232,7 @@ def test_grounding_uses_nli_entailment_scoring(monkeypatch):
     assert graph.edges["a", "b"]["word"] == "infection"
     assert graph.graph["grounding_candidate_words"] == ["infection", "caused", "fever"]
     assert graph.graph["grounding_method"] == "nli_contrastive_entailment"
-    assert graph.graph["grounding_model_id"] == "cross-encoder/nli-distilroberta-base"
+    assert graph.graph["grounding_model_id"] == "cross-encoder/stsb-distilroberta-base"
     assert graph.nodes["a"]["word_score"] == pytest.approx(0.9)
 
 
@@ -253,6 +254,45 @@ def test_grounding_hypotheses_do_not_copy_candidate_words(monkeypatch):
         for targets in captured
         for hypothesis in targets.values()
     )
+
+
+def test_span_grounding_attaches_offsets_and_top_candidates(monkeypatch):
+    estimator = fitted(monkeypatch)
+    captured = []
+
+    class FakeSpanBackend:
+        @staticmethod
+        def generate_candidates(text):
+            del text
+            return [Span("infection", 1, 2), Span("high fever", 4, 6)]
+
+        def score_spans(self, text, candidates, concepts):
+            captured.append((text, candidates, concepts))
+            result = {}
+            for target in concepts:
+                winner = (
+                    SpanScore("high fever", 4, 6, 0.83)
+                    if target == "b"
+                    else SpanScore("infection", 1, 2, 0.83)
+                )
+                result[target] = [
+                    winner,
+                    SpanScore("infection", 1, 2, 0.76)
+                    if target == "b"
+                    else SpanScore("high fever", 4, 6, 0.76),
+                ]
+            return result
+
+    estimator.grounding_backend_ = FakeSpanBackend()
+    graph = estimator.transform("The infection caused a high fever.")
+
+    assert graph.nodes["a"]["span"] == "infection"
+    assert graph.nodes["a"]["span_start"] == 1
+    assert graph.nodes["a"]["span_end"] == 2
+    assert graph.nodes["a"]["word"] == "infection"
+    assert graph.nodes["a"]["grounding_candidates"][1]["span"] == "high fever"
+    assert graph.graph["grounding_method"] == "cross_encoder_span_similarity"
+    assert captured[0][2]["a"].label == "A"
 
 
 def test_weak_or_ambiguous_grounding_is_left_unattached():
