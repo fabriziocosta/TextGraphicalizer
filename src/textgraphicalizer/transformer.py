@@ -222,20 +222,25 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             if not ranked:
                 continue
             winner = ranked[0]
+            score_distribution = [
+                {
+                    "span": candidate.text,
+                    "start_word": candidate.start_word,
+                    "end_word": candidate.end_word,
+                    "score": candidate.score,
+                }
+                for candidate in ranked
+            ]
             best[target] = {
                 "span": winner.text,
                 "span_start": winner.start_word,
                 "span_end": winner.end_word,
                 "span_score": winner.score,
                 "grounding_candidates": [
-                    {
-                        "span": candidate.text,
-                        "start_word": candidate.start_word,
-                        "end_word": candidate.end_word,
-                        "score": candidate.score,
-                    }
+                    {"span": candidate.text, "score": candidate.score}
                     for candidate in ranked[:cls._GROUNDING_TOP_K]
                 ],
+                "grounding_score_distribution": score_distribution,
             }
             if winner.end_word - winner.start_word == 1:
                 best[target].update(
