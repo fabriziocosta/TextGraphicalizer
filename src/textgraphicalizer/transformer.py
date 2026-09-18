@@ -438,7 +438,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                 ),
                 "stopwords_count": len(self.stopwords_),
                 "grounding_candidate_words": [word for _, word in content_words],
-                "grounding_method": "nli_entailment",
+                "grounding_method": "nli_contrastive_entailment",
                 "grounding_model_id": self.grounding_model_id,
                 "input_truncated": self.backend_.was_truncated(
                     text,

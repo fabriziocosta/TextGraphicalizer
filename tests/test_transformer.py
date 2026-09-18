@@ -230,7 +230,7 @@ def test_grounding_uses_nli_entailment_scoring(monkeypatch):
     assert graph.nodes["b"]["word"] == "infection"
     assert graph.edges["a", "b"]["word"] == "infection"
     assert graph.graph["grounding_candidate_words"] == ["infection", "caused", "fever"]
-    assert graph.graph["grounding_method"] == "nli_entailment"
+    assert graph.graph["grounding_method"] == "nli_contrastive_entailment"
     assert graph.graph["grounding_model_id"] == "cross-encoder/nli-distilroberta-base"
     assert graph.nodes["a"]["word_score"] == pytest.approx(0.9)
 
