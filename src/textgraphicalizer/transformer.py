@@ -12,6 +12,7 @@ import networkx as nx
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils.validation import check_is_fitted
 
+from .bert_backend import BertGroundingBackend
 from .laya_backend import LayaBackend
 from .ontology import Ontology, load_ontology
 from .optimizer import EdgeEvidence, NodeEvidence, select_graph, select_graph_by_threshold
@@ -44,6 +45,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         connected: bool = False,
         max_node_degree: int | None = None,
         stopwords_path: str | Path | None = None,
+        grounding_model_id: str = "bert-base-uncased",
     ) -> None:
         self.ontology = ontology
         self.model_id = model_id
@@ -56,9 +58,12 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         self.connected = connected
         self.max_node_degree = max_node_degree
         self.stopwords_path = stopwords_path
+        self.grounding_model_id = grounding_model_id
         self.load_model()
 
     def _validate_parameters(self) -> None:
+        if not isinstance(self.grounding_model_id, str) or not self.grounding_model_id:
+            raise TypeError("grounding_model_id must be a non-empty string")
         for name, value in (
             ("node_threshold", self.node_threshold),
             ("edge_threshold", self.edge_threshold),
@@ -109,6 +114,10 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             model_revision=self.model_revision,
             device=self.device,
         ).load()
+        self.grounding_backend_: BertGroundingBackend = BertGroundingBackend(
+            model_id=self.grounding_model_id,
+            device=self.device,
+        ).load()
         self._model_loaded_ = True
         return self
 
@@ -133,104 +142,47 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             if word.casefold() not in self.stopwords_
         ]
 
-    @staticmethod
-    def _marked_word_state(text: str, words: Sequence[tuple[int, str]]) -> str:
-        """Mark every candidate token so word questions refer to exact tokens."""
-        marked = text
-        token_indices = {index for index, _ in words}
-        matches = list(_WORD_RE.finditer(text))
-        for index, match in reversed(list(enumerate(matches))):
-            if index not in token_indices:
-                continue
-            token = match.group(0)
-            marker = f"<word_{index}>{token}</word_{index}>"
-            marked = marked[:match.start()] + marker + marked[match.end():]
-        return marked
-
-    def _node_word_questions(
+    def _node_words_by_bert(
         self,
-        nodes: Sequence[NodeEvidence],
+        text: str,
         words: Sequence[tuple[int, str]],
-    ) -> tuple[dict[str, dict[str, Any]], dict[str, tuple[str, int, str]]]:
-        """Ask one binary question for every concept/word pair."""
-        questions: dict[str, dict[str, Any]] = {}
-        question_map: dict[str, tuple[str, int, str]] = {}
-        for node_index, node in enumerate(nodes):
-            concept = self.ontology_.concept_by_id.get(node.concept_id)
-            description = (
-                f" Concept description: {concept.description}"
-                if concept is not None
-                else ""
-            )
-            for word_index, (token_index, word) in enumerate(words):
-                question_id = f"ground_node_word_{node_index}_{word_index}"
-                questions[question_id] = {
-                    "type": "noul",
-                    "instructions": (
-                        f'Is the exact word "{word}" at token position {token_index}, '
-                        f'marked <word_{token_index}>, an explicit expression of '
-                        f'the concept "{node.label}" in this sentence? Answer '
-                        f"true only when the word directly names the concept, "
-                        f"not when it is merely related.{description}"
-                    ),
-                }
-                question_map[question_id] = (node.concept_id, token_index, word)
-        return questions, question_map
-
-    def _edge_word_questions(
-        self,
         graph: nx.DiGraph,
-        node_words: Mapping[str, Mapping[str, Any]],
+        concepts_by_node: Mapping[str, str],
+    ) -> dict[str, dict[str, Any]]:
+        """Ground selected nodes by contextual BERT cosine similarity."""
+        if not words or graph.number_of_nodes() == 0 or not concepts_by_node:
+            return {}
+        scores = self.grounding_backend_.score_words(text, words, concepts_by_node)
+        return self._best_bert_words(scores)
+
+    def _edge_words_by_bert(
+        self,
+        text: str,
         words: Sequence[tuple[int, str]],
-    ) -> tuple[dict[str, dict[str, Any]], dict[str, tuple[tuple[str, str], int, str]]]:
-        """Ask one binary question for every selected edge/word pair."""
-        questions: dict[str, dict[str, Any]] = {}
-        question_map: dict[str, tuple[tuple[str, str], int, str]] = {}
-        for edge_index, (source, target, data) in enumerate(graph.edges(data=True)):
-            source_word = node_words.get(str(source), {}).get("word") or "no explicit word"
-            target_word = node_words.get(str(target), {}).get("word") or "no explicit word"
-            source_label = graph.nodes[source].get("label", source)
-            target_label = graph.nodes[target].get("label", target)
-            relation_label = data.get("label", "relation")
-            for word_index, (token_index, word) in enumerate(words):
-                question_id = f"ground_edge_word_{edge_index}_{word_index}"
-                questions[question_id] = {
-                    "type": "noul",
-                    "instructions": (
-                        f'Is the exact word "{word}" at token position {token_index}, '
-                        f'marked <word_{token_index}>, an explicit expression of '
-                        f'the relation "{relation_label}" from "{source_label}" '
-                        f'(word: "{source_word}") to "{target_label}" '
-                        f'(word: "{target_word}") in this sentence? Answer '
-                        "true only when the word directly expresses the relation, "
-                        "not when it names one of the concepts."
-                    ),
-                }
-                question_map[question_id] = ((str(source), str(target)), token_index, word)
-        return questions, question_map
+        graph: nx.DiGraph,
+        relations_by_edge: Mapping[tuple[str, str], str],
+    ) -> dict[tuple[str, str], dict[str, Any]]:
+        """Ground selected edges by contextual BERT cosine similarity."""
+        if not words or graph.number_of_edges() == 0 or not relations_by_edge:
+            return {}
+        scores = self.grounding_backend_.score_words(text, words, relations_by_edge)
+        return self._best_bert_words(scores)
 
     @staticmethod
-    def _best_word_answers(
-        answers: Mapping[str, Any],
-        question_map: Mapping[str, tuple[Any, int, str]],
+    def _best_bert_words(
+        scores: Mapping[Any, Sequence[tuple[int, str, float]]],
     ) -> dict[Any, dict[str, Any]]:
-        """Choose the highest-probability exact word for each target."""
+        """Choose the highest cosine-scoring candidate for each target."""
         best: dict[Any, dict[str, Any]] = {}
-        for question_id, (target, token_index, word) in question_map.items():
-            answer = answers.get(question_id)
-            if not isinstance(answer, Mapping):
-                raise ValueError(f"Laya did not return an answer for {question_id}")
-            value = answer.get("noul")
-            if value is None:
-                raise ValueError(f"Laya response for {question_id} lacks noul")
-            probability = float(value)
-            current = best.get(target)
-            if current is None or probability > current["word_probability"]:
-                best[target] = {
-                    "word": word,
-                    "word_index": token_index,
-                    "word_probability": probability,
-                }
+        for target, candidates in scores.items():
+            if not candidates:
+                continue
+            token_index, word, score = max(candidates, key=lambda item: item[2])
+            best[target] = {
+                "word": word,
+                "word_index": token_index,
+                "word_score": score,
+            }
         return best
 
     @staticmethod
@@ -343,18 +295,6 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             else [node for node in node_evidence if node.probability >= self.node_threshold]
         )
         content_words = self._content_words(text)
-        grounding_state = self._marked_word_state(text, content_words)
-        node_word_questions, node_word_map = self._node_word_questions(
-            relation_nodes, content_words
-        )
-        node_word_result = (
-            self.backend_.predict(grounding_state, node_word_questions)
-            if node_word_questions
-            else {"answers": {}}
-        )
-        node_words = self._best_word_answers(
-            node_word_result.get("answers", {}), node_word_map
-        )
         edge_questions: dict[str, dict[str, Any]] = {}
         pair_map: dict[str, tuple[str, str]] = {}
         for source in relation_nodes:
@@ -366,8 +306,6 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                     continue
                 question_id = f"edge_{len(pair_map)}"
                 pair_map[question_id] = (source.concept_id, target.concept_id)
-                source_word = node_words.get(source.concept_id, {}).get("word")
-                target_word = node_words.get(target.concept_id, {}).get("word")
                 criteria = {
                     relation.id: f"{relation.label}: {relation.description}"
                     for relation in relations
@@ -377,10 +315,8 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                     "type": "choice",
                     "instructions": (
                         f'Which relation, if any, is expressed from "{source.label}" '
-                        f'to "{target.label}" in this paragraph? The source '
-                        f'word is "{source_word or "not directly grounded"}" and '
-                        f'the target word is "{target_word or "not directly grounded"}". '
-                        "Choose no_relation unless the relation is explicitly stated."
+                        f'to "{target.label}" in this paragraph? Choose no_relation '
+                        "unless the relation is explicitly stated."
                     ),
                     "criteria": criteria,
                 }
@@ -443,20 +379,40 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                 node_threshold=self.node_threshold,
                 edge_threshold=self.edge_threshold,
             )
+
+        concept_by_id = self.ontology_.concept_by_id
+        node_descriptions = {
+            str(node): (
+                f"{graph.nodes[node]['label']}. "
+                f"{concept_by_id[node].description}"
+            )
+            for node in graph.nodes
+            if node in concept_by_id
+        }
+        node_words = self._node_words_by_bert(
+            text,
+            content_words,
+            graph,
+            node_descriptions,
+        )
         self._attach_node_words(graph, node_words)
-        edge_word_questions, edge_word_map = self._edge_word_questions(
-            graph, node_words, content_words
-        )
-        edge_word_result = (
-            self.backend_.predict(grounding_state, edge_word_questions)
-            if edge_word_questions
-            else {"answers": {}}
-        )
-        edge_words = self._best_word_answers(
-            edge_word_result.get("answers", {}), edge_word_map
+
+        relation_by_label = {relation.label: relation for relation in relation_by_id.values()}
+        edge_descriptions = {
+            (str(source), str(target)): (
+                f"{data['label']}. "
+                f"{relation_by_label[data['label']].description}"
+            )
+            for source, target, data in graph.edges(data=True)
+            if data.get("label") in relation_by_label
+        }
+        edge_words = self._edge_words_by_bert(
+            text,
+            content_words,
+            graph,
+            edge_descriptions,
         )
         self._attach_edge_words(graph, edge_words)
-        grounding_questions = {**node_word_questions, **edge_word_questions}
         graph.graph.update(
             {
                 "ontology_version": self.ontology_.version,
@@ -476,13 +432,13 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                 ),
                 "stopwords_count": len(self.stopwords_),
                 "grounding_candidate_words": [word for _, word in content_words],
+                "grounding_method": "bert_cosine",
+                "grounding_model_id": self.grounding_model_id,
                 "input_truncated": self.backend_.was_truncated(
                     text,
                     {
                         **node_questions,
-                        **node_word_questions,
                         **edge_questions,
-                        **edge_word_questions,
                     },
                 ),
             }

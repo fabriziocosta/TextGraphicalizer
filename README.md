@@ -19,11 +19,11 @@ python -m pip install -e ".[notebook]"
 python -m ipykernel install --user --name py312 --display-name "py312"
 ```
 
-Constructing `TextGraphicalizer` initializes Laya once; this may download the
-pinned `convaiinnovations/laya` checkpoint into the standard Hugging Face
-cache. `.load_model()` remains available and idempotent. The model weights are
-not stored in this repository. To run offline, pass a previously downloaded
-snapshot with `model_path`.
+Constructing `TextGraphicalizer` initializes Laya and the BERT grounding model;
+this may download both checkpoints into the standard Hugging Face cache.
+`.load_model()` remains available and idempotent. The model weights are not
+stored in this repository. To run offline, pass a previously downloaded Laya
+snapshot with `model_path` and ensure the configured BERT checkpoint is cached.
 
 By default, graph selection uses the MILP optimizer. Set `use_milp=False` to
 select nodes with `node_threshold` and edges with `edge_threshold` directly;
@@ -70,6 +70,7 @@ from textgraphicalizer import TextGraphicalizer
 extractor = TextGraphicalizer(
     ontology="ontology.yaml",
     stopwords_path="stopwords.yaml",
+    grounding_model_id="bert-base-uncased",
     connected=False,
 )
 graph = extractor.fit_transform("An infection caused the patient to develop a fever.")
@@ -96,15 +97,15 @@ full Laya sequence for every node and relation question, including question
 instructions, relation options, special tokens, and the configured 512-token
 budget—not against the paragraph token count alone.
 
-For candidate nodes and selected edges, TextGraphicalizer asks Laya a separate
-binary question for each exact sentence word and chooses the highest-probability
-word. Stopwords are removed from
-this choice set using [`stopwords.yaml`](stopwords.yaml), while the complete
-sentence is still passed to Laya. Supply `stopwords_path=...` to use another
-YAML file. The result is stored as `word`, `word_index`, and
-`word_probability` on the corresponding node or edge. Selection is direct
-independent argmax over Laya's exact-word probabilities; no additional
-optimizer is used.
+For candidate nodes and selected edges, TextGraphicalizer uses contextual BERT
+embeddings. It encodes each non-stopword candidate in the complete paragraph,
+encodes each ontology concept or relation description, and assigns the word
+with the highest cosine similarity. Long paragraphs are encoded with
+overlapping BERT windows. Stopwords are removed from this choice set using
+[`stopwords.yaml`](stopwords.yaml); supply `stopwords_path=...` to use another
+YAML file. The result is stored as `word`, `word_index`, and `word_score` on
+the corresponding node or edge. Set `grounding_model_id=...` to use another
+Hugging Face BERT checkpoint.
 The checked-in default is derived from the [Snowball English stopword
 list](https://snowballstem.org/algorithms/english/stop.txt).
 

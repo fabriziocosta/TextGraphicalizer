@@ -18,9 +18,10 @@ TextGraphicalizer uses those answers in two stages by default:
 2. A mixed-integer optimizer chooses a globally consistent subset of that
    evidence and returns a directed NetworkX graph.
 
-The grounding pass asks Laya a separate binary question for each exact
-candidate word and retained graph item, then takes the highest probability.
-It does not use another optimization problem.
+The grounding pass uses contextual BERT embeddings. Each non-stopword is
+encoded in the paragraph, each retained concept or relation description is
+encoded separately, and the candidate with the highest cosine similarity is
+assigned to the graph item. It does not use another optimization problem.
 
 Set `use_milp=False` to skip the second-stage optimizer and retain nodes and
 edges by applying `node_threshold` and `edge_threshold` directly. In that mode,

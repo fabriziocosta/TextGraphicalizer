@@ -12,6 +12,8 @@ license = { text = "MIT" }
 authors = [{ name = "TextGraphicalizer contributors" }]
 dependencies = [
     "laya==0.1.6",
+    "torch>=2.0.0",
+    "transformers>=4.45.0",
     "networkx>=3.0",
     "numpy>=1.24",
     "PyYAML>=6.0",

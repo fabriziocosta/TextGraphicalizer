@@ -1,5 +1,6 @@
 """Laya-backed ontology-constrained text graph extraction."""
 
+from .bert_backend import BertGroundingBackend
 from .errors import (
     GraphOptimizationError,
     LayaBackendError,
@@ -14,6 +15,7 @@ from .transformer import TextGraphicalizer
 
 __all__ = [
     "Concept",
+    "BertGroundingBackend",
     "GraphOptimizationError",
     "LayaBackendError",
     "LayaInferenceError",
