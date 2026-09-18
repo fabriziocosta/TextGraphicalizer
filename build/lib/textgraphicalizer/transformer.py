@@ -13,7 +13,7 @@ from sklearn.utils.validation import check_is_fitted
 
 from .laya_backend import LayaBackend
 from .ontology import Ontology, load_ontology
-from .optimizer import EdgeEvidence, NodeEvidence, select_graph, select_graph_by_threshold
+from .optimizer import EdgeEvidence, NodeEvidence, select_graph
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,6 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         device: str = "auto",
         node_threshold: float = 0.5,
         edge_threshold: float = 0.5,
-        use_milp: bool = True,
         connected: bool = False,
         max_node_degree: int | None = None,
     ) -> None:
@@ -46,7 +45,6 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         self.device = device
         self.node_threshold = node_threshold
         self.edge_threshold = edge_threshold
-        self.use_milp = use_milp
         self.connected = connected
         self.max_node_degree = max_node_degree
 
@@ -57,8 +55,6 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         ):
             if not 0.0 < value < 1.0:
                 raise ValueError(f"{name} must be strictly between 0 and 1")
-        if not isinstance(self.use_milp, bool):
-            raise TypeError("use_milp must be a bool")
         if not isinstance(self.connected, bool):
             raise TypeError("connected must be a bool")
         if self.max_node_degree is not None:
@@ -72,8 +68,12 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
     def fit(self, X: Any = None, y: Any = None) -> "TextGraphicalizer":
         del X, y
         self._validate_parameters()
-        if not hasattr(self, "ontology_"):
-            self.ontology_ = load_ontology(self.ontology)
+        self.ontology_ = load_ontology(self.ontology)
+        # ``fit`` validates/configures the estimator. Model weights are
+        # intentionally loaded only by the explicit ``load_model`` method.
+        self._model_loaded_ = False
+        if hasattr(self, "backend_"):
+            del self.backend_
         self.n_features_in_ = 1
         return self
 
@@ -81,9 +81,9 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         """Load Laya and return this estimator.
 
         Loading is explicit because it may download a large checkpoint and
-        initialize a device-specific runtime. This method can be called before
-        or after ``fit()``. Repeated calls are idempotent for this estimator
-        instance.
+        initialize a device-specific runtime. This method can be called after
+        ``fit()`` or directly on a newly-created estimator. Repeated calls are
+        idempotent for this estimator instance.
         """
         self._validate_parameters()
         if not hasattr(self, "ontology_"):
@@ -124,8 +124,9 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             if answer is None:
                 raise ValueError(f"Laya did not return an answer for node_{index}")
             probability = float(answer.get("noul"))
-            # Keep every scored concept for MILP selection. In threshold mode,
-            # below-threshold concepts are filtered before relation questions.
+            # Keep every scored concept. The MILP owns node existence and
+            # decides whether below-threshold nodes are worthwhile for a
+            # coherent graph.
             node_evidence.append(
                 NodeEvidence(
                     concept_id=concept.id,
@@ -135,15 +136,10 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                 )
             )
 
-        relation_nodes = (
-            node_evidence
-            if self.use_milp
-            else [node for node in node_evidence if node.probability >= self.node_threshold]
-        )
         edge_questions: dict[str, dict[str, Any]] = {}
         pair_map: dict[str, tuple[str, str]] = {}
-        for source in relation_nodes:
-            for target in relation_nodes:
+        for source in node_evidence:
+            for target in node_evidence:
                 if source.concept_id == target.concept_id:
                     continue
                 relations = self.ontology_.valid_relations(source.concept_id, target.concept_id)
@@ -168,7 +164,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         logger.info(
             "Scoring ontology relations question_count=%d candidate_node_count=%d",
             len(edge_questions),
-            len(relation_nodes),
+            len(node_evidence),
         )
         edge_result = self.backend_.predict(text, edge_questions) if edge_questions else {"answers": {}}
         edge_answers = edge_result.get("answers", {})
@@ -206,22 +202,14 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                 )
             )
 
-        if self.use_milp:
-            graph = select_graph(
-                node_evidence,
-                candidate_edges,
-                node_threshold=self.node_threshold,
-                edge_threshold=self.edge_threshold,
-                connected=self.connected,
-                max_node_degree=self.max_node_degree,
-            )
-        else:
-            graph = select_graph_by_threshold(
-                node_evidence,
-                candidate_edges,
-                node_threshold=self.node_threshold,
-                edge_threshold=self.edge_threshold,
-            )
+        graph = select_graph(
+            node_evidence,
+            candidate_edges,
+            node_threshold=self.node_threshold,
+            edge_threshold=self.edge_threshold,
+            connected=self.connected,
+            max_node_degree=self.max_node_degree,
+        )
         graph.graph.update(
             {
                 "ontology_version": self.ontology_.version,
@@ -231,10 +219,9 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                 ),
                 "node_threshold": self.node_threshold,
                 "edge_threshold": self.edge_threshold,
-                "use_milp": self.use_milp,
                 "connected": self.connected,
                 "max_node_degree": self.max_node_degree,
-                "solver": "scipy.optimize.milp" if self.use_milp else "thresholds",
+                "solver": "scipy.optimize.milp",
                 "input_truncated": self.backend_.was_truncated(
                     text, {**node_questions, **edge_questions}
                 ),

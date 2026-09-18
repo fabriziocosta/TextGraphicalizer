@@ -19,11 +19,16 @@ python -m pip install -e ".[notebook]"
 python -m ipykernel install --user --name py312 --display-name "py312"
 ```
 
-`fit()` validates the ontology without loading model weights. Call
-`load_model()` explicitly to initialize Laya; this may download the pinned
-`convaiinnovations/laya` checkpoint into the standard Hugging Face cache. The
-model weights are not stored in this repository. To run offline, pass a
-previously downloaded snapshot with `model_path`.
+`load_model()` initializes Laya once; this may download the pinned
+`convaiinnovations/laya` checkpoint into the standard Hugging Face cache.
+`fit()` only validates/configures the estimator and preserves an already-loaded
+model, so `fit_transform()` can be used after `load_model()`. The model weights
+are not stored in this repository. To run offline, pass a previously downloaded
+snapshot with `model_path`.
+
+By default, graph selection uses the MILP optimizer. Set `use_milp=False` to
+select nodes with `node_threshold` and edges with `edge_threshold` directly;
+in that mode, `connected` and `max_node_degree` are ignored.
 
 ## Ontology
 
@@ -63,12 +68,8 @@ semantic relations.
 ```python
 from textgraphicalizer import TextGraphicalizer
 
-graph = (
-    TextGraphicalizer("ontology.yaml", connected=False)
-    .fit()
-    .load_model()
-    .transform("An infection caused the patient to develop a fever.")
-)
+extractor = TextGraphicalizer("ontology.yaml", connected=False).load_model()
+graph = extractor.fit_transform("An infection caused the patient to develop a fever.")
 
 print(graph.nodes(data=True))
 print(graph.edges(data=True))
@@ -80,10 +81,12 @@ when available, Laya's distinct `confidence` value. Edges retain `probability`
 as an alias for existence probability and also expose separate
 `existence_probability` and `relation_probability` attributes.
 
-All ontology concepts are scored before optimization. `node_threshold` and
-`edge_threshold` are threshold-relative MILP objective settings, not early
-filters; the optimizer can select a below-threshold node when it improves the
-overall graph.
+With the default `use_milp=True`, all ontology concepts are scored before
+optimization. `node_threshold` and `edge_threshold` are threshold-relative
+MILP objective settings, not early filters; the optimizer can select a
+below-threshold node when it improves the overall graph. With `use_milp=False`,
+the thresholds are direct filters and both endpoints of a retained edge must
+pass `node_threshold`.
 
 Graph metadata includes `input_truncated`. This flag is computed against the
 full Laya sequence for every node and relation question, including question
@@ -95,6 +98,8 @@ budget—not against the paragraph token count alone.
 `TextGraphicalizer.display()` renders any resulting graph and returns its
 Matplotlib `(figure, axes)` pair. Rendering options can be tuned without
 duplicating visualization code:
+
+The default layout is `kamada_kawai`.
 
 ```python
 figure, axes = extractor.display(
@@ -123,3 +128,17 @@ TEXTGRAPHICALIZER_RUN_MODEL_TESTS=1 pytest -m model
 
 The regular test suite uses a deterministic fake backend and does not download
 model weights.
+
+## Development checks
+
+Run the local quality checks with:
+
+```bash
+python -m pytest -m "not model"
+ruff check src tests
+mypy src
+```
+
+The CI workflow tests Python 3.10, 3.11, and 3.12, executes the notebook with
+a fake backend, and verifies installation into a separate clean virtual
+environment.

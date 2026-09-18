@@ -60,23 +60,11 @@ class LayaBackend:
             try:
                 from huggingface_hub import snapshot_download
 
-                download_kwargs = {
-                    "repo_id": self.model_id,
-                    "revision": revision,
-                }
-                try:
-                    # Resolve an existing snapshot without contacting the Hub or
-                    # showing its progress bars. Only fall back to the online
-                    # path when the requested revision is not cached locally.
-                    model_source = snapshot_download(
-                        **download_kwargs,
-                        local_files_only=True,
-                    )
-                except FileNotFoundError:
-                    model_source = snapshot_download(
-                        **download_kwargs,
-                        token=os.environ.get("HF_TOKEN"),
-                    )
+                model_source = snapshot_download(
+                    repo_id=self.model_id,
+                    revision=revision,
+                    token=os.environ.get("HF_TOKEN"),
+                )
             except Exception as exc:
                 raise LayaModelError(
                     f"Could not download Laya model {self.model_id!r} at revision {revision!r}"

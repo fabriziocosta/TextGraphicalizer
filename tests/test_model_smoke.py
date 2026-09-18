@@ -19,11 +19,8 @@ def test_real_laya_model_smoke():
             {"id": "supports", "label": "supports", "description": "Supports the target concept."},
         ],
     }
-    graph = (
-        TextGraphicalizer(ontology)
-        .fit()
-        .load_model()
-        .transform("Rain fell throughout the afternoon.")
+    graph = TextGraphicalizer(ontology).load_model().fit_transform(
+        "Rain fell throughout the afternoon."
     )
     assert graph.is_directed()
     assert graph.graph["model_id"] == "convaiinnovations/laya"

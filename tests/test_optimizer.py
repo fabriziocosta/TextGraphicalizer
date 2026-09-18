@@ -1,8 +1,14 @@
 import networkx as nx
 import pytest
 
+import textgraphicalizer.optimizer as optimizer_module
 from textgraphicalizer import GraphOptimizationError
-from textgraphicalizer.optimizer import EdgeEvidence, NodeEvidence, select_graph
+from textgraphicalizer.optimizer import (
+    EdgeEvidence,
+    NodeEvidence,
+    select_graph,
+    select_graph_by_threshold,
+)
 
 
 def nodes(*probabilities):
@@ -29,6 +35,18 @@ def kwargs(**overrides):
 
 def test_selects_positive_nodes_and_edges():
     graph = select_graph(nodes(0.9, 0.1), [edge(0, 0)], **kwargs())
+    assert set(graph.nodes) == {"0"}
+    assert graph.number_of_edges() == 0
+
+
+def test_select_graph_by_threshold_filters_nodes_and_edges_independently():
+    graph = select_graph_by_threshold(
+        nodes(0.9, 0.4),
+        [edge(0, 1, probability=0.99), edge(0, 0, probability=0.99)],
+        node_threshold=0.5,
+        edge_threshold=0.5,
+    )
+
     assert set(graph.nodes) == {"0"}
     assert graph.number_of_edges() == 0
 
@@ -71,3 +89,12 @@ def test_empty_candidates_return_empty_graph_when_disconnected():
     graph = select_graph([], [], **kwargs())
     assert isinstance(graph, nx.DiGraph)
     assert graph.number_of_nodes() == 0
+
+
+def test_solver_failure_is_domain_specific(monkeypatch):
+    def fail(**kwargs):
+        raise ValueError("bad solver input")
+
+    monkeypatch.setattr(optimizer_module, "milp", fail)
+    with pytest.raises(GraphOptimizationError, match="MILP solver failed"):
+        select_graph(nodes(0.9), [], **kwargs())

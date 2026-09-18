@@ -2,7 +2,6 @@ import pytest
 
 from textgraphicalizer import TextGraphicalizer
 
-
 ONTOLOGY = {
     "version": 1,
     "concepts": [
@@ -50,7 +49,7 @@ def fitted(monkeypatch, **params):
         "textgraphicalizer.transformer.LayaBackend.load",
         lambda self: FakeBackend(),
     )
-    return TextGraphicalizer(ONTOLOGY, **params).fit().load_model()
+    return TextGraphicalizer(ONTOLOGY, **params).load_model()
 
 
 def test_fit_does_not_load_model(monkeypatch):
@@ -79,6 +78,54 @@ def test_load_model_is_explicit_and_idempotent(monkeypatch):
     assert estimator.load_model() is estimator
     assert estimator.load_model() is estimator
     assert len(calls) == 1
+
+
+def test_fit_preserves_an_already_loaded_model(monkeypatch):
+    calls = []
+
+    def load(self):
+        calls.append(self)
+        return FakeBackend()
+
+    monkeypatch.setattr("textgraphicalizer.transformer.LayaBackend.load", load)
+    estimator = TextGraphicalizer(ONTOLOGY).load_model()
+    backend = estimator.backend_
+
+    assert estimator.fit() is estimator
+    assert estimator.backend_ is backend
+    assert len(calls) == 1
+
+
+def test_fit_transform_loads_model_once(monkeypatch):
+    calls = []
+
+    def load(self):
+        calls.append(self)
+        return FakeBackend()
+
+    monkeypatch.setattr("textgraphicalizer.transformer.LayaBackend.load", load)
+    estimator = TextGraphicalizer(ONTOLOGY)
+
+    graph = estimator.fit_transform("A causes B.")
+
+    assert set(graph.nodes) == {"a", "b"}
+    assert len(calls) == 1
+
+
+def test_threshold_mode_uses_thresholds_without_milp(monkeypatch):
+    estimator = fitted(
+        monkeypatch,
+        use_milp=False,
+        node_threshold=0.85,
+        connected=True,
+    )
+
+    graph = estimator.transform("A causes B.")
+
+    assert set(graph.nodes) == {"a"}
+    assert graph.number_of_edges() == 0
+    assert graph.graph["use_milp"] is False
+    assert graph.graph["solver"] == "thresholds"
 
 
 def test_load_model_can_be_called_without_fit(monkeypatch):
@@ -128,7 +175,7 @@ def test_relation_questions_are_domain_filtered(monkeypatch):
         "textgraphicalizer.transformer.LayaBackend.load",
         lambda self: FakeBackend(),
     )
-    estimator = TextGraphicalizer(ontology).fit().load_model()
+    estimator = TextGraphicalizer(ontology).load_model()
     graph = estimator.transform("A causes B.")
     assert set(graph.edges) == {("a", "b")}
 
@@ -166,4 +213,29 @@ def test_display_is_parameterized_and_returns_matplotlib_objects(monkeypatch):
     )
     assert figure is axes.figure
     assert axes.get_title().startswith("Custom graph")
+    plt.close(figure)
+
+
+def test_display_defaults_to_kamada_kawai(monkeypatch):
+    pytest.importorskip("matplotlib")
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    estimator = fitted(monkeypatch)
+    graph = estimator.transform("A causes B.")
+    calls = []
+
+    def fake_kamada_kawai_layout(received_graph):
+        calls.append(received_graph)
+        return {"a": (0.0, 0.0), "b": (1.0, 1.0)}
+
+    monkeypatch.setattr(
+        "textgraphicalizer.transformer.nx.kamada_kawai_layout",
+        fake_kamada_kawai_layout,
+    )
+    figure, _ = estimator.display(graph, show=False)
+
+    assert calls == [graph]
     plt.close(figure)

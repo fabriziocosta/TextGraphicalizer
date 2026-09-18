@@ -32,54 +32,6 @@ class EdgeEvidence:
     relation_probability: float | None = None
 
 
-def select_graph_by_threshold(
-    nodes: Sequence[NodeEvidence],
-    edges: Sequence[EdgeEvidence],
-    *,
-    node_threshold: float,
-    edge_threshold: float,
-) -> nx.DiGraph:
-    """Select nodes and edges independently using their configured thresholds."""
-    graph = nx.DiGraph()
-    selected_nodes = {
-        node.concept_id for node in nodes if node.probability >= node_threshold
-    }
-    graph.add_nodes_from(
-        (
-            node.concept_id,
-            {
-                "label": node.label,
-                "probability": node.probability,
-                **({"confidence": node.confidence} if node.confidence is not None else {}),
-            },
-        )
-        for node in nodes
-        if node.concept_id in selected_nodes
-    )
-    for edge in edges:
-        if (
-            edge.probability < edge_threshold
-            or edge.source == edge.target
-            or edge.source not in selected_nodes
-            or edge.target not in selected_nodes
-        ):
-            continue
-        graph.add_edge(
-            edge.source,
-            edge.target,
-            label=edge.label,
-            probability=edge.probability,
-            existence_probability=edge.probability,
-            **(
-                {"relation_probability": edge.relation_probability}
-                if edge.relation_probability is not None
-                else {}
-            ),
-            **({"confidence": edge.confidence} if edge.confidence is not None else {}),
-        )
-    return graph
-
-
 def _logit(probability: float) -> float:
     epsilon = 1e-6
     p = min(max(float(probability), epsilon), 1.0 - epsilon)

@@ -22,6 +22,11 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    "nbclient>=0.10",
+    "nbformat>=5.10",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "types-PyYAML>=6.0",
 ]
 notebook = [
     "jupyterlab>=4.0",
@@ -42,3 +47,18 @@ pythonpath = ["src"]
 markers = [
     "model: requires downloading/loading the Laya checkpoint",
 ]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+mypy_path = "src"
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_return_any = true

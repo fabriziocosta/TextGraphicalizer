@@ -11,12 +11,16 @@ of state—here, one paragraph—and a set of typed questions. It returns
 structured answers such as probabilities, class labels, scores, and confidence
 values.
 
-TextGraphicalizer uses those answers in two stages:
+TextGraphicalizer uses those answers in two stages by default:
 
 1. Laya supplies local semantic evidence: which ontology concepts seem to be
    present, and which relations seem to hold between pairs of concepts.
 2. A mixed-integer optimizer chooses a globally consistent subset of that
    evidence and returns a directed NetworkX graph.
+
+Set `use_milp=False` to skip the second-stage optimizer and retain nodes and
+edges by applying `node_threshold` and `edge_threshold` directly. In that mode,
+`connected` and `max_node_degree` are ignored.
 
 In symbols, the overall idea is:
 
@@ -256,7 +260,7 @@ $$
 The order matters: $i\to j$ is different from $j\to i$. This is why the
 output is a `networkx.DiGraph`, not an undirected graph.
 
-### 3. Global selection with binary variables
+### 3. Global selection with binary variables (`use_milp=True`)
 
 The optimizer introduces a binary variable $x_i$ for each candidate node and
 a binary variable $y_{ij}$ for each candidate edge:
@@ -307,6 +311,23 @@ If `connected=False`, the result may contain several disconnected components.
 If `connected=True`, the optimizer chooses the highest-probability candidate
 node as a root and adds flow constraints so every selected node is reachable
 from that root when edge directions are treated as usable connections.
+
+### 4. Direct threshold selection (`use_milp=False`)
+
+In direct threshold mode, a node is retained exactly when:
+
+$$
+p_i ≥ τ_N
+$$
+
+An edge is retained exactly when:
+
+$$
+q_{ij} ≥ τ_E
+$$
+
+and both endpoint nodes are retained. No connectivity or degree constraints
+are applied in this mode.
 
 ## Worked example
 
