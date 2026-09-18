@@ -13,6 +13,7 @@ class NliGroundingBackend:
     """Score word/concept hypotheses with an NLI-fine-tuned encoder."""
 
     _WORD_RE = re.compile(r"[A-Za-z]+(?:['’][A-Za-z]+)?")
+    candidate_context_radius = 5
 
     def __init__(
         self,
@@ -147,6 +148,32 @@ class NliGroundingBackend:
             result[token_index] = matching
         return result
 
+    def _candidate_contexts(
+        self,
+        text: str,
+        words: Sequence[tuple[int, str]],
+    ) -> dict[int, list[tuple[str, int]]]:
+        """Return local context text and the candidate's context position.
+
+        A full paragraph is useful for deciding whether a concept is present,
+        but it is too broad for attributing that concept to one word.  Using a
+        small token window keeps the contrastive comparison focused on the
+        candidate's local evidence instead of paragraph-wide salience.
+        """
+        matches = list(self._WORD_RE.finditer(text))
+        result: dict[int, list[tuple[str, int]]] = {}
+        for token_index, _ in words:
+            if token_index >= len(matches):
+                continue
+            start = max(0, token_index - self.candidate_context_radius)
+            end = min(
+                len(matches),
+                token_index + self.candidate_context_radius + 1,
+            )
+            context = text[matches[start].start():matches[end - 1].end()]
+            result[token_index] = [(context, token_index - start)]
+        return result
+
     def score_words(
         self,
         text: str,
@@ -156,11 +183,11 @@ class NliGroundingBackend:
         """Return entailment probabilities for every target/word pair."""
         if not words or not targets:
             return {target: [] for target in targets}
-        candidate_windows = self._candidate_windows(text, words)
+        candidate_windows = self._candidate_contexts(text, words)
         pairs: list[tuple[Any, int, str, str, str]] = []
         for target, hypothesis_template in targets.items():
             for token_index, word in words:
-                for premise in candidate_windows.get(token_index, []):
+                for premise, _ in candidate_windows.get(token_index, []):
                     hypothesis = hypothesis_template.replace("{word}", word)
                     pairs.append((target, token_index, word, premise, hypothesis))
         scored = self._score_pairs(pairs)
@@ -183,20 +210,27 @@ class NliGroundingBackend:
             return {target: [] for target in targets}
 
         present = self.score_words(text, words, targets)
-        matches = list(self._WORD_RE.finditer(text))
+        candidate_contexts = self._candidate_contexts(text, words)
         dropped_pairs: list[tuple[Any, int, str, str, str]] = []
         for token_index, word in words:
-            if token_index >= len(matches):
+            contexts = candidate_contexts.get(token_index, [])
+            if not contexts:
                 continue
-            match = matches[token_index]
-            dropped_text = text[:match.start()] + text[match.end():]
-            dropped_premises = self._premise_windows(dropped_text)
-            for target, hypothesis_template in targets.items():
-                hypothesis = hypothesis_template.replace("{word}", word)
-                for premise, _, _ in dropped_premises:
-                    dropped_pairs.append(
-                        (target, token_index, word, premise, hypothesis)
-                    )
+            for context, relative_index in contexts:
+                context_matches = list(self._WORD_RE.finditer(context))
+                if relative_index >= len(context_matches):
+                    continue
+                match = context_matches[relative_index]
+                dropped_context = context[:match.start()] + context[match.end():]
+                if not dropped_context.strip():
+                    continue
+                dropped_premises = [dropped_context]
+                for target, hypothesis_template in targets.items():
+                    hypothesis = hypothesis_template.replace("{word}", word)
+                    for premise in dropped_premises:
+                        dropped_pairs.append(
+                            (target, token_index, word, premise, hypothesis)
+                        )
         dropped = self._score_pairs(dropped_pairs)
 
         result: dict[Any, list[tuple[int, str, float]]] = {}

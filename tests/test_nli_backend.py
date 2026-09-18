@@ -19,6 +19,17 @@ def test_candidate_windows_keep_the_window_containing_each_token():
     assert result[2] == ["beta harvest"]
 
 
+def test_candidate_contexts_are_local_to_each_word():
+    backend = NliGroundingBackend("fake")
+    text = "zero one two three four five six seven eight nine ten eleven twelve"
+
+    result = backend._candidate_contexts(text, [(6, "six")])
+
+    context, relative_index = result[6][0]
+    assert context == "one two three four five six seven eight nine ten eleven"
+    assert relative_index == 5
+
+
 class PairTokenizer:
     def __call__(self, premises, hypotheses, **kwargs):
         del premises, kwargs

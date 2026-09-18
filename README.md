@@ -103,8 +103,9 @@ paragraph and after removing each exact candidate word occurrence. The
 associated word is the candidate with the largest drop in entailment
 probability; the candidate word is deliberately not included in the hypothesis
 itself, which avoids selecting words merely because they have been copied into
-the NLI hypothesis. Long paragraphs are evaluated with overlapping context
-windows. Stopwords are removed from this choice set using
+the NLI hypothesis. Each candidate is evaluated in a local five-word-radius
+context so a globally salient noun does not get assigned to every node. Long
+paragraphs are evaluated with overlapping context windows. Stopwords are removed from this choice set using
 [`stopwords.yaml`](stopwords.yaml); supply `stopwords_path=...` to use another
 YAML file. The result is stored as `word`, `word_index`, and `word_score` on
 the corresponding node or edge. Set `grounding_model_id=...` to use another

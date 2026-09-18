@@ -440,6 +440,9 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                 "grounding_candidate_words": [word for _, word in content_words],
                 "grounding_method": "nli_contrastive_entailment",
                 "grounding_model_id": self.grounding_model_id,
+                "grounding_candidate_context_radius": getattr(
+                    self.grounding_backend_, "candidate_context_radius", None
+                ),
                 "input_truncated": self.backend_.was_truncated(
                     text,
                     {
