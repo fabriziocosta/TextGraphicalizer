@@ -25,11 +25,30 @@ def _as_id_list(value: Any, field: str, owner: str) -> tuple[str, ...] | None:
     return values
 
 
+def _as_term_list(value: Any, field: str, owner: str) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, (list, tuple)):
+        raise OntologyError(f"{owner}.{field} must be a list when provided")
+    terms: list[str] = []
+    for index, item in enumerate(value):
+        if not isinstance(item, str) or not item.strip():
+            raise OntologyError(f"{owner}.{field}[{index}] must be a non-empty string")
+        term = item.strip()
+        if len(term.split()) != 1:
+            raise OntologyError(f"{owner}.{field}[{index}] must contain one word")
+        terms.append(term)
+    if len(set(term.casefold() for term in terms)) != len(terms):
+        raise OntologyError(f"{owner}.{field} contains duplicate terms")
+    return tuple(terms)
+
+
 @dataclass(frozen=True)
 class Concept:
     id: str
     label: str
     description: str
+    grounding_terms: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -39,6 +58,7 @@ class Relation:
     description: str
     source_concepts: tuple[str, ...] | None = None
     target_concepts: tuple[str, ...] | None = None
+    grounding_terms: tuple[str, ...] = ()
 
     def allows(self, source_id: str, target_id: str) -> bool:
         return (
@@ -124,6 +144,7 @@ def load_ontology(source: str | Path | Mapping[str, Any] | Ontology) -> Ontology
                 id=concept_id,
                 label=_required_text(raw, "label", owner),
                 description=_required_text(raw, "description", owner),
+                grounding_terms=_as_term_list(raw.get("grounding_terms"), "grounding_terms", owner),
             )
         )
 
@@ -142,6 +163,7 @@ def load_ontology(source: str | Path | Mapping[str, Any] | Ontology) -> Ontology
             description=_required_text(raw, "description", owner),
             source_concepts=_as_id_list(raw.get("source_concepts"), "source_concepts", owner),
             target_concepts=_as_id_list(raw.get("target_concepts"), "target_concepts", owner),
+            grounding_terms=_as_term_list(raw.get("grounding_terms"), "grounding_terms", owner),
         )
         for field, values in (
             ("source_concepts", relation.source_concepts),

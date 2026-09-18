@@ -255,6 +255,32 @@ def test_grounding_hypotheses_do_not_copy_candidate_words(monkeypatch):
     )
 
 
+def test_weak_or_ambiguous_grounding_is_left_unattached():
+    scores = {
+        "node": [
+            (0, "river", 0.21),
+            (1, "shelter", 0.18),
+        ],
+        "clear_node": [
+            (0, "storm", 0.9),
+            (1, "river", 0.1),
+        ],
+    }
+
+    result = TextGraphicalizer._best_nli_words(scores)
+
+    assert "node" not in result
+    assert result["clear_node"]["word"] == "storm"
+
+
+def test_grounding_terms_can_resolve_a_weak_nli_match():
+    scores = {"event": [(0, "shelter", 0.12), (1, "storm", 0.04)]}
+
+    result = TextGraphicalizer._best_nli_words(scores, {"event": ("storm",)})
+
+    assert result["event"]["word"] == "storm"
+
+
 def test_grounding_loads_stopwords_from_external_yaml(monkeypatch, tmp_path):
     stopwords_path = tmp_path / "stopwords.yaml"
     stopwords_path.write_text("stopwords: [the, caused]\n", encoding="utf-8")

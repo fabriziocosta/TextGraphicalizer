@@ -63,6 +63,7 @@ concepts:
   - id: natural_object
     label: Natural object
     description: An object occurring naturally rather than being made by humans.
+    grounding_terms: [river, tree, plant, animal, mountain, lake, rock, soil, water]
     wordnet_synset: natural_object.n.01
     part_of_speech: noun
 
@@ -93,24 +94,28 @@ concepts:
   - id: event
     label: Event
     description: Something that happens at a particular place or time.
+    grounding_terms: [storm, flood, accident, meeting, war, fire, drought, harvest]
     wordnet_synset: event.n.01
     part_of_speech: noun
 
   - id: act
     label: Act
     description: Something that people do or cause to happen.
+    grounding_terms: [force, move, act, do, cause, flood, change, make]
     wordnet_synset: act.n.02
     part_of_speech: noun
 
   - id: process
     label: Process
     description: A series of actions, changes, or functions that brings about a result.
+    grounding_terms: [move, change, develop, grow, build, flood, process]
     wordnet_synset: process.n.06
     part_of_speech: noun
 
   - id: state
     label: State
     description: The way something is with respect to its main attributes.
+    grounding_terms: [flooded, broken, closed, open, ready, nearby, heavy, state]
     wordnet_synset: state.n.02
     part_of_speech: noun
 
@@ -196,6 +201,7 @@ relations:
   - id: causes
     label: causes
     description: The source produces, brings about, or is responsible for the target.
+    grounding_terms: [cause, force, flood, lead, produce, bring]
     wordnet_pointer: cause
     source_concepts: [event, act, process, state]
     target_concepts: [event, act, process, state]

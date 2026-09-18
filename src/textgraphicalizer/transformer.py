@@ -32,6 +32,9 @@ def _confidence(answer: Mapping[str, Any]) -> float | None:
 class TextGraphicalizer(BaseEstimator, TransformerMixin):
     """Convert one paragraph into an ontology-constrained directed graph."""
 
+    _MIN_GROUNDING_SCORE = 0.2
+    _MIN_GROUNDING_MARGIN = 0.1
+
     def __init__(
         self,
         ontology: str | Path | Mapping[str, Any] | Ontology,
@@ -148,6 +151,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         words: Sequence[tuple[int, str]],
         graph: nx.DiGraph,
         concepts_by_node: Mapping[str, str],
+        grounding_terms_by_node: Mapping[str, Sequence[str]] | None = None,
     ) -> dict[str, dict[str, Any]]:
         """Ground selected nodes by NLI entailment probability."""
         if not words or graph.number_of_nodes() == 0 or not concepts_by_node:
@@ -155,7 +159,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         scores = self.grounding_backend_.score_words_contrastive(
             text, words, concepts_by_node
         )
-        return self._best_nli_words(scores)
+        return self._best_nli_words(scores, grounding_terms_by_node)
 
     def _edge_words_by_nli(
         self,
@@ -163,6 +167,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         words: Sequence[tuple[int, str]],
         graph: nx.DiGraph,
         relations_by_edge: Mapping[tuple[str, str], str],
+        grounding_terms_by_edge: Mapping[tuple[str, str], Sequence[str]] | None = None,
     ) -> dict[tuple[str, str], dict[str, Any]]:
         """Ground selected edges by NLI entailment probability."""
         if not words or graph.number_of_edges() == 0 or not relations_by_edge:
@@ -170,18 +175,60 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         scores = self.grounding_backend_.score_words_contrastive(
             text, words, relations_by_edge
         )
-        return self._best_nli_words(scores)
+        return self._best_nli_words(scores, grounding_terms_by_edge)
+
+    @staticmethod
+    def _grounding_term_matches(word: str, term: str) -> bool:
+        word = word.casefold()
+        term = term.casefold()
+        if word == term:
+            return True
+        variants = {word}
+        for suffix in ("ing", "ed", "es", "s"):
+            if word.endswith(suffix) and len(word) > len(suffix) + 2:
+                base = word[: -len(suffix)]
+                variants.add(base)
+                variants.add(base + "e")
+        return term in variants
 
     @staticmethod
     def _best_nli_words(
         scores: Mapping[Any, Sequence[tuple[int, str, float]]],
+        preferred_terms: Mapping[Any, Sequence[str]] | None = None,
     ) -> dict[Any, dict[str, Any]]:
-        """Choose the highest-entailment candidate for each target."""
+        """Choose a strong candidate, optionally restricted to ontology terms."""
         best: dict[Any, dict[str, Any]] = {}
         for target, candidates in scores.items():
             if not candidates:
                 continue
-            token_index, word, score = max(candidates, key=lambda item: item[2])
+            terms = (preferred_terms or {}).get(target, ())
+            term_matches = {
+                candidate: next(
+                    (
+                        index
+                        for index, term in enumerate(terms)
+                        if TextGraphicalizer._grounding_term_matches(candidate[1], term)
+                    ),
+                    None,
+                )
+                for candidate in candidates
+            }
+            preferred = [candidate for candidate in candidates if term_matches[candidate] is not None]
+            if preferred:
+                best_term_index = min(term_matches[candidate] for candidate in preferred)
+                preferred = [
+                    candidate
+                    for candidate in preferred
+                    if term_matches[candidate] == best_term_index
+                ]
+            ranked = sorted(preferred or candidates, key=lambda item: item[2], reverse=True)
+            token_index, word, score = ranked[0]
+            runner_up_score = ranked[1][2] if len(ranked) > 1 else float("-inf")
+            if not preferred and (
+                score < TextGraphicalizer._MIN_GROUNDING_SCORE
+                or score - runner_up_score < TextGraphicalizer._MIN_GROUNDING_MARGIN
+            ):
+                continue
             best[target] = {
                 "word": word,
                 "word_index": token_index,
@@ -393,11 +440,17 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             for node in graph.nodes
             if node in concept_by_id
         }
+        node_grounding_terms = {
+            str(node): concept_by_id[node].grounding_terms
+            for node in graph.nodes
+            if node in concept_by_id
+        }
         node_words = self._node_words_by_nli(
             text,
             content_words,
             graph,
             node_descriptions,
+            node_grounding_terms,
         )
         self._attach_node_words(graph, node_words)
 
@@ -412,11 +465,17 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             for source, target, data in graph.edges(data=True)
             if data.get("label") in relation_by_label
         }
+        edge_grounding_terms = {
+            (str(source), str(target)): relation_by_label[data["label"]].grounding_terms
+            for source, target, data in graph.edges(data=True)
+            if data.get("label") in relation_by_label
+        }
         edge_words = self._edge_words_by_nli(
             text,
             content_words,
             graph,
             edge_descriptions,
+            edge_grounding_terms,
         )
         self._attach_edge_words(graph, edge_words)
         graph.graph.update(
@@ -440,6 +499,8 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                 "grounding_candidate_words": [word for _, word in content_words],
                 "grounding_method": "nli_contrastive_entailment",
                 "grounding_model_id": self.grounding_model_id,
+                "grounding_min_score": self._MIN_GROUNDING_SCORE,
+                "grounding_min_margin": self._MIN_GROUNDING_MARGIN,
                 "grounding_candidate_context_radius": getattr(
                     self.grounding_backend_, "candidate_context_radius", None
                 ),

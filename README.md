@@ -47,6 +47,8 @@ relations:
 ```
 
 Relations may optionally specify `source_concepts` and `target_concepts`.
+Concepts and relations may also specify a single-word `grounding_terms` list;
+these terms are preferred when attaching sentence words to graph items.
 
 ## Initial WordNet ontology
 
@@ -108,7 +110,9 @@ context so a globally salient noun does not get assigned to every node. Long
 paragraphs are evaluated with overlapping context windows. Stopwords are removed from this choice set using
 [`stopwords.yaml`](stopwords.yaml); supply `stopwords_path=...` to use another
 YAML file. The result is stored as `word`, `word_index`, and `word_score` on
-the corresponding node or edge. Set `grounding_model_id=...` to use another
+the corresponding node or edge only when the attribution score is strong and
+has a clear margin over the next candidate; otherwise no word is attached. Set
+`grounding_model_id=...` to use another
 Hugging Face NLI checkpoint.
 The checked-in default is derived from the [Snowball English stopword
 list](https://snowballstem.org/algorithms/english/stop.txt).
