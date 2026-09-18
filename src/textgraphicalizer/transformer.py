@@ -350,7 +350,6 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                 relation_probabilities,
                 key=lambda relation: relation_probabilities[relation],
             )
-            existence_probability = max(0.0, min(1.0, 1.0 - no_relation_probability))
             relation_probability = relation_probabilities[relation_id]
             candidate_edges.append(
                 EdgeEvidence(
