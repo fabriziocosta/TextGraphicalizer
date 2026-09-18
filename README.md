@@ -99,9 +99,10 @@ budget—not against the paragraph token count alone.
 
 For candidate nodes and selected edges, TextGraphicalizer uses an NLI
 cross-encoder. It tests hypotheses such as “the word `drought` directly refers
-to the concept `State`” against the complete paragraph and assigns the word
-with the highest entailment probability. Long paragraphs are evaluated with
-overlapping context windows. Stopwords are removed from this choice set using
+to the concept `State`” with the word present and after removing that exact
+word occurrence. The associated word is the candidate with the largest drop in
+entailment probability. Long paragraphs are evaluated with overlapping context
+windows. Stopwords are removed from this choice set using
 [`stopwords.yaml`](stopwords.yaml); supply `stopwords_path=...` to use another
 YAML file. The result is stored as `word`, `word_index`, and `word_score` on
 the corresponding node or edge. Set `grounding_model_id=...` to use another

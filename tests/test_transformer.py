@@ -67,6 +67,9 @@ class FakeNliBackend:
             ]
         return result
 
+    def score_words_contrastive(self, text, words, targets):
+        return self.score_words(text, words, targets)
+
 
 def fitted(monkeypatch, **params):
     monkeypatch.setattr(

@@ -152,7 +152,9 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         """Ground selected nodes by NLI entailment probability."""
         if not words or graph.number_of_nodes() == 0 or not concepts_by_node:
             return {}
-        scores = self.grounding_backend_.score_words(text, words, concepts_by_node)
+        scores = self.grounding_backend_.score_words_contrastive(
+            text, words, concepts_by_node
+        )
         return self._best_nli_words(scores)
 
     def _edge_words_by_nli(
@@ -165,7 +167,9 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         """Ground selected edges by NLI entailment probability."""
         if not words or graph.number_of_edges() == 0 or not relations_by_edge:
             return {}
-        scores = self.grounding_backend_.score_words(text, words, relations_by_edge)
+        scores = self.grounding_backend_.score_words_contrastive(
+            text, words, relations_by_edge
+        )
         return self._best_nli_words(scores)
 
     @staticmethod

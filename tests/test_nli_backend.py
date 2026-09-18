@@ -56,3 +56,38 @@ def test_score_words_uses_entailment_probability():
 
     assert scores["node"][0][1] == "infection"
     assert scores["node"][0][2] > scores["node"][1][2]
+
+
+def test_contrastive_scoring_prefers_words_that_change_entailment(monkeypatch):
+    backend = NliGroundingBackend("fake")
+    monkeypatch.setattr(
+        backend,
+        "score_words",
+        lambda text, words, targets: {
+            "node": [(0, "repeated", 0.9), (1, "drought", 0.8)]
+        },
+    )
+    monkeypatch.setattr(
+        backend,
+        "_premise_windows",
+        lambda text: [(text, 0, len(text))],
+    )
+    monkeypatch.setattr(
+        backend,
+        "_score_pairs",
+        lambda pairs: {
+            "node": {
+                0: ("repeated", 0.8),
+                1: ("drought", 0.1),
+            }
+        },
+    )
+
+    scores = backend.score_words_contrastive(
+        "repeated drought",
+        [(0, "repeated"), (1, "drought")],
+        {"node": 'The word "{word}" refers to the concept.'},
+    )
+
+    assert scores["node"][1][1] == "drought"
+    assert scores["node"][1][2] > scores["node"][0][2]

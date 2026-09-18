@@ -153,9 +153,6 @@ class NliGroundingBackend:
         """Return entailment probabilities for every target/word pair."""
         if not words or not targets:
             return {target: [] for target in targets}
-        model, tokenizer, device, max_length, entailment_index = self._require_loaded()
-        import torch
-
         candidate_windows = self._candidate_windows(text, words)
         pairs: list[tuple[Any, int, str, str, str]] = []
         for target, hypothesis_template in targets.items():
@@ -163,9 +160,69 @@ class NliGroundingBackend:
                 for premise in candidate_windows.get(token_index, []):
                     hypothesis = hypothesis_template.replace("{word}", word)
                     pairs.append((target, token_index, word, premise, hypothesis))
-        if not pairs:
+        scored = self._score_pairs(pairs)
+        return {
+            target: [
+                (token_index, word, score)
+                for token_index, (word, score) in candidates.items()
+            ]
+            for target, candidates in scored.items()
+        }
+
+    def score_words_contrastive(
+        self,
+        text: str,
+        words: Sequence[tuple[int, str]],
+        targets: Mapping[Any, str],
+    ) -> dict[Any, list[tuple[int, str, float]]]:
+        """Score words by the entailment drop caused by removing that occurrence."""
+        if not words or not targets:
             return {target: [] for target in targets}
 
+        present = self.score_words(text, words, targets)
+        matches = list(self._WORD_RE.finditer(text))
+        dropped_pairs: list[tuple[Any, int, str, str, str]] = []
+        for token_index, word in words:
+            if token_index >= len(matches):
+                continue
+            match = matches[token_index]
+            dropped_text = text[:match.start()] + text[match.end():]
+            dropped_premises = self._premise_windows(dropped_text)
+            for target, hypothesis_template in targets.items():
+                hypothesis = hypothesis_template.replace("{word}", word)
+                for premise, _, _ in dropped_premises:
+                    dropped_pairs.append(
+                        (target, token_index, word, premise, hypothesis)
+                    )
+        dropped = self._score_pairs(dropped_pairs)
+
+        result: dict[Any, list[tuple[int, str, float]]] = {}
+        for target in targets:
+            present_by_token = {
+                token_index: score
+                for token_index, _, score in present.get(target, [])
+            }
+            dropped_by_token = {
+                token_index: score
+                for token_index, (_, score) in dropped.get(target, {}).items()
+            }
+            result[target] = [
+                (token_index, word, present_by_token[token_index] - dropped_by_token.get(token_index, 0.0))
+                for token_index, word in words
+                if token_index in present_by_token
+            ]
+        return result
+
+    def _score_pairs(
+        self,
+        pairs: Sequence[tuple[Any, int, str, str, str]],
+    ) -> dict[Any, dict[int, tuple[str, float]]]:
+        if not pairs:
+            return {}
+        model, tokenizer, device, max_length, entailment_index = self._require_loaded()
+        import torch
+
+        targets = {item[0] for item in pairs}
         results: dict[Any, dict[int, tuple[str, float]]] = {target: {} for target in targets}
         batch_size = 32
         for start in range(0, len(pairs), batch_size):
@@ -191,11 +248,4 @@ class NliGroundingBackend:
                 previous = results[target].get(token_index)
                 if previous is None or probability > previous[1]:
                     results[target][token_index] = (word, float(probability))
-
-        return {
-            target: [
-                (token_index, word, score)
-                for token_index, (word, score) in candidates.items()
-            ]
-            for target, candidates in results.items()
-        }
+        return results

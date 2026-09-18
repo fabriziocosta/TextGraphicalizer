@@ -19,9 +19,10 @@ TextGraphicalizer uses those answers in two stages by default:
    evidence and returns a directed NetworkX graph.
 
 The grounding pass uses an NLI cross-encoder. For each candidate word and
-retained concept or relation, it evaluates a hypothesis against the paragraph
-and assigns the candidate with the highest entailment probability. It does not
-use another optimization problem.
+retained concept or relation, it evaluates a hypothesis with the word present
+and after removing that exact occurrence. The candidate with the largest drop
+in entailment probability is assigned to the graph item. It does not use
+another optimization problem.
 
 Set `use_milp=False` to skip the second-stage optimizer and retain nodes and
 edges by applying `node_threshold` and `edge_threshold` directly. In that mode,
