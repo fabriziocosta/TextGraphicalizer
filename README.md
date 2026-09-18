@@ -10,9 +10,10 @@ decision model and a SciPy mixed-integer optimizer.
 python -m pip install -e .
 ```
 
-The first call to `fit()` downloads `convaiinnovations/laya` into the standard
-Hugging Face cache. The model weights are not stored in this repository. To
-run offline, pass a previously downloaded snapshot with `model_path`.
+The first call to `fit()` downloads the pinned `convaiinnovations/laya`
+checkpoint into the standard Hugging Face cache. The model weights are not
+stored in this repository. To run offline, pass a previously downloaded
+snapshot with `model_path`.
 
 ## Ontology
 
@@ -56,7 +57,7 @@ The estimator returns a directed graph. Nodes and edges contain `label`,
 The optional integration test downloads and loads the model:
 
 ```bash
-pytest -m model
+TEXTGRAPHICALIZER_RUN_MODEL_TESTS=1 pytest -m model
 ```
 
 The regular test suite uses a deterministic fake backend and does not download

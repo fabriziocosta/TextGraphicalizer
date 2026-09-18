@@ -27,6 +27,10 @@ dev = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.textgraphicalizer]
+model_id = "convaiinnovations/laya"
+model_revision = "7c76b622dfc5cac71b2dc1c29873efe2ce509a05"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

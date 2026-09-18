@@ -137,6 +137,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
 
         edge_result = self.backend_.predict(text, edge_questions) if edge_questions else {"answers": {}}
         edge_answers = edge_result.get("answers", {})
+        relation_by_id = self.ontology_.relation_by_id
         candidate_edges: list[EdgeEvidence] = []
         for question_id, (source_id, target_id) in pair_map.items():
             answer = edge_answers.get(question_id)
@@ -155,12 +156,13 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             if not relation_probabilities:
                 continue
             relation_id = max(relation_probabilities, key=relation_probabilities.get)
+            edge_probability = max(0.0, min(1.0, 1.0 - no_relation_probability))
             candidate_edges.append(
                 EdgeEvidence(
                     source=source_id,
                     target=target_id,
-                    label=relation_id,
-                    probability=1.0 - no_relation_probability,
+                    label=relation_by_id[relation_id].label,
+                    probability=edge_probability,
                     confidence=_confidence(answer),
                 )
             )
@@ -177,7 +179,9 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             {
                 "ontology_version": self.ontology_.version,
                 "model_id": self.model_id,
-                "model_revision": self.model_revision,
+                "model_revision": getattr(
+                    self.backend_, "effective_model_revision", self.model_revision
+                ),
                 "node_threshold": self.node_threshold,
                 "edge_threshold": self.edge_threshold,
                 "connected": self.connected,

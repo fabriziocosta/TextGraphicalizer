@@ -7,6 +7,9 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
+DEFAULT_LAYA_MODEL_REVISION = "7c76b622dfc5cac71b2dc1c29873efe2ce509a05"
+
+
 class LayaBackend:
     """Load one Laya agent and expose the operations needed by the transformer."""
 
@@ -25,6 +28,7 @@ class LayaBackend:
         self.device = device
         self.agent: Any | None = None
         self.resolved_model_path: str | None = self.model_path
+        self.effective_model_revision: str | None = model_revision
 
     def load(self) -> "LayaBackend":
         try:
@@ -36,15 +40,19 @@ class LayaBackend:
             ) from exc
 
         model_source = self.model_path
-        if self.model_revision is not None:
+        revision = self.model_revision
+        if model_source is None and self.model_id == "convaiinnovations/laya" and revision is None:
+            revision = DEFAULT_LAYA_MODEL_REVISION
+        if revision is not None:
             from huggingface_hub import snapshot_download
 
             model_source = snapshot_download(
                 repo_id=self.model_id,
-                revision=self.model_revision,
+                revision=revision,
                 token=os.environ.get("HF_TOKEN"),
             )
             self.resolved_model_path = model_source
+            self.effective_model_revision = revision
         device = None if self.device == "auto" else self.device
         self.agent = laya.load(model_source or self.model_id, device=device)
         if model_source is None:
