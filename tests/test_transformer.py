@@ -184,6 +184,17 @@ def test_grounding_uses_single_non_stopwords_for_selected_items(monkeypatch):
     )
 
 
+def test_grounding_loads_stopwords_from_external_yaml(monkeypatch, tmp_path):
+    stopwords_path = tmp_path / "stopwords.yaml"
+    stopwords_path.write_text("stopwords: [the, caused]\n", encoding="utf-8")
+    estimator = fitted(monkeypatch, stopwords_path=stopwords_path)
+
+    graph = estimator.transform("The infection caused a fever.")
+
+    assert graph.graph["grounding_candidate_words"] == ["infection", "a", "fever"]
+    assert graph.graph["stopwords_path"] == str(stopwords_path)
+
+
 def test_transform_sequence_returns_graphs(monkeypatch):
     estimator = fitted(monkeypatch)
     graphs = estimator.transform(["A causes B.", "B causes A."])

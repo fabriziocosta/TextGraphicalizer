@@ -95,16 +95,23 @@ budget—not against the paragraph token count alone.
 
 For every selected node and edge, TextGraphicalizer also asks Laya to choose
 the best single content word from the sentence. Stopwords are removed from
-this choice set with a small built-in list, while the complete sentence is
-still passed to Laya. The result is stored as `word`, `word_index`, and
+this choice set using [`stopwords.yaml`](stopwords.yaml), while the complete
+sentence is still passed to Laya. Supply `stopwords_path=...` to use another
+YAML file. The result is stored as `word`, `word_index`, and
 `word_probability` on the corresponding node or edge. Selection is direct
 argmax over Laya's word probabilities; no additional optimizer is used.
+The checked-in default is derived from the [Snowball English stopword
+list](https://snowballstem.org/algorithms/english/stop.txt).
 
 ## Rendering graphs
 
 `TextGraphicalizer.display()` renders any resulting graph and returns its
 Matplotlib `(figure, axes)` pair. Rendering options can be tuned without
 duplicating visualization code:
+
+When reciprocal edges have the same relation label, the renderer displays
+them as one undirected edge. Node and edge annotations include both the
+ontology/relation label and the associated sentence word.
 
 The default layout is `kamada_kawai`.
 

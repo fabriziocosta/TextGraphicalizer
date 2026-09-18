@@ -9,6 +9,7 @@ from .errors import (
     OntologyError,
 )
 from .ontology import Concept, Ontology, Relation, load_ontology
+from .stopwords import load_stopwords
 from .transformer import TextGraphicalizer
 
 __all__ = [
@@ -23,6 +24,7 @@ __all__ = [
     "Relation",
     "TextGraphicalizer",
     "load_ontology",
+    "load_stopwords",
 ]
 
 __version__ = "0.1.0"

@@ -15,67 +15,11 @@ from sklearn.utils.validation import check_is_fitted
 from .laya_backend import LayaBackend
 from .ontology import Ontology, load_ontology
 from .optimizer import EdgeEvidence, NodeEvidence, select_graph, select_graph_by_threshold
+from .stopwords import DEFAULT_STOPWORDS_PATH, load_stopwords
 
 logger = logging.getLogger(__name__)
 
 
-# Deliberately small and dependency-free. These words are removed only from
-# the grounding candidate set; they are still present in the sentence passed
-# to Laya.
-SIMPLE_STOPWORDS = frozenset(
-    {
-        "a",
-        "an",
-        "and",
-        "are",
-        "as",
-        "at",
-        "be",
-        "by",
-        "for",
-        "from",
-        "had",
-        "has",
-        "have",
-        "he",
-        "her",
-        "his",
-        "i",
-        "in",
-        "is",
-        "it",
-        "its",
-        "me",
-        "my",
-        "of",
-        "on",
-        "or",
-        "our",
-        "she",
-        "that",
-        "the",
-        "their",
-        "them",
-        "there",
-        "these",
-        "they",
-        "this",
-        "those",
-        "to",
-        "was",
-        "we",
-        "were",
-        "what",
-        "when",
-        "where",
-        "which",
-        "who",
-        "will",
-        "with",
-        "you",
-        "your",
-    }
-)
 _WORD_RE = re.compile(r"[A-Za-z]+(?:['’][A-Za-z]+)?")
 
 
@@ -99,6 +43,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         use_milp: bool = True,
         connected: bool = False,
         max_node_degree: int | None = None,
+        stopwords_path: str | Path | None = None,
     ) -> None:
         self.ontology = ontology
         self.model_id = model_id
@@ -110,6 +55,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         self.use_milp = use_milp
         self.connected = connected
         self.max_node_degree = max_node_degree
+        self.stopwords_path = stopwords_path
 
     def _validate_parameters(self) -> None:
         for name, value in (
@@ -135,6 +81,8 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         self._validate_parameters()
         if not hasattr(self, "ontology_"):
             self.ontology_ = load_ontology(self.ontology)
+        if not hasattr(self, "stopwords_"):
+            self.stopwords_ = load_stopwords(self.stopwords_path)
         self.n_features_in_ = 1
         return self
 
@@ -150,6 +98,8 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         if not hasattr(self, "ontology_"):
             self.ontology_ = load_ontology(self.ontology)
             self.n_features_in_ = 1
+        if not hasattr(self, "stopwords_"):
+            self.stopwords_ = load_stopwords(self.stopwords_path)
         if getattr(self, "_model_loaded_", False):
             return self
         self.backend_: LayaBackend = LayaBackend(
@@ -173,14 +123,13 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             for index, concept in enumerate(self.ontology_.concepts)
         }
 
-    @staticmethod
-    def _content_words(text: str) -> list[tuple[int, str]]:
+    def _content_words(self, text: str) -> list[tuple[int, str]]:
         """Return original token positions and non-stopword single words."""
         words = _WORD_RE.findall(text)
         return [
             (index, word)
             for index, word in enumerate(words)
-            if word.casefold() not in SIMPLE_STOPWORDS
+            if word.casefold() not in self.stopwords_
         ]
 
     @staticmethod
@@ -471,6 +420,10 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                 "max_node_degree": self.max_node_degree,
                 "solver": "scipy.optimize.milp" if self.use_milp else "thresholds",
                 "grounding_stopwords_removed": True,
+                "stopwords_path": str(
+                    self.stopwords_path or DEFAULT_STOPWORDS_PATH
+                ),
+                "stopwords_count": len(self.stopwords_),
                 "grounding_candidate_words": [word for _, word in content_words],
                 "input_truncated": self.backend_.was_truncated(
                     text, {**node_questions, **edge_questions, **grounding_questions}
