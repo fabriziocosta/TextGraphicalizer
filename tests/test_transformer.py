@@ -123,12 +123,12 @@ def test_grounding_model_loads_automatically_and_remains_idempotent(monkeypatch)
         laya_calls.append(self)
         return FakeBackend()
 
-    def load_bert(self):
+    def load_nli(self):
         nli_calls.append(self)
         return FakeNliBackend(self.model_id, self.device)
 
     monkeypatch.setattr("textgraphicalizer.transformer.LayaBackend.load", load_laya)
-    monkeypatch.setattr("textgraphicalizer.transformer.NliGroundingBackend.load", load_bert)
+    monkeypatch.setattr("textgraphicalizer.transformer.NliGroundingBackend.load", load_nli)
     estimator = TextGraphicalizer(ONTOLOGY)
 
     assert estimator.load_model() is estimator

@@ -23,7 +23,7 @@ Constructing `TextGraphicalizer` initializes Laya and the NLI grounding model;
 this may download both checkpoints into the standard Hugging Face cache.
 `.load_model()` remains available and idempotent. The model weights are not
 stored in this repository. To run offline, pass a previously downloaded Laya
-snapshot with `model_path` and ensure the configured BERT checkpoint is cached.
+snapshot with `model_path` and ensure the configured NLI checkpoint is cached.
 
 By default, graph selection uses the MILP optimizer. Set `use_milp=False` to
 select nodes with `node_threshold` and edges with `edge_threshold` directly;

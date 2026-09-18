@@ -172,7 +172,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
     def _best_nli_words(
         scores: Mapping[Any, Sequence[tuple[int, str, float]]],
     ) -> dict[Any, dict[str, Any]]:
-        """Choose the highest cosine-scoring candidate for each target."""
+        """Choose the highest-entailment candidate for each target."""
         best: dict[Any, dict[str, Any]] = {}
         for target, candidates in scores.items():
             if not candidates:
