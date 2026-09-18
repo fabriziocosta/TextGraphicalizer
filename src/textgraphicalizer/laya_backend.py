@@ -62,7 +62,7 @@ class LayaBackend:
             try:
                 from huggingface_hub import snapshot_download
 
-                download_kwargs = {
+                download_kwargs: dict[str, Any] = {
                     "repo_id": self.model_id,
                     "revision": revision,
                 }

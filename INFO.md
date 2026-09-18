@@ -18,11 +18,13 @@ TextGraphicalizer uses those answers in two stages by default:
 2. A mixed-integer optimizer chooses a globally consistent subset of that
    evidence and returns a directed NetworkX graph.
 
-The grounding pass uses an NLI cross-encoder. For each candidate word and
-retained concept or relation, it evaluates a hypothesis with the word present
-and after removing that exact occurrence. The candidate with the largest drop
-in entailment probability is assigned to the graph item. It does not use
-another optimization problem.
+After graph selection, the grounding pass uses a Sentence Transformers
+cross-encoder to choose a textual span for each retained node and edge. It
+constructs a concept query from the ontology label and description, generates
+every contiguous one-, two-, and three-word span, marks each span in the
+original paragraph, and scores the concept/context pair. The highest-scoring
+span is attached to the graph item. This is a ranking score, not a calibrated
+probability, and it does not use another optimization problem.
 
 Set `use_milp=False` to skip the second-stage optimizer and retain nodes and
 edges by applying `node_threshold` and `edge_threshold` directly. In that mode,
@@ -33,11 +35,57 @@ In symbols, the overall idea is:
 $$
 Text → Laya questions → weighted candidates
 → constraints + optimization → final graph
-→ selected-item word grounding
+→ selected-item span grounding
 $$
 
 Laya does not know that the output should be a graph. The graph structure is
 provided by this project.
+
+## Span grounding
+
+The default grounding model is the STS cross-encoder
+`cross-encoder/stsb-distilroberta-base`. For an ontology concept such as
+`State`, the first input is:
+
+```text
+Concept: State
+Description: The way something is with respect to its main attributes.
+```
+
+The second input keeps the complete paragraph and marks one candidate span:
+
+```text
+Sentence: The severe <<drought>> caused widespread crop failure.
+Candidate expression: drought
+```
+
+The backend scores all concept/span pairs in batches. Candidate spans retain
+their original word positions, with `start_word` inclusive and `end_word`
+exclusive. For example, `crop failure` can be stored as `start_word=5` and
+`end_word=7`. Stopwords are not removed from candidate generation because the
+surrounding sentence is part of the evidence.
+
+Selected graph nodes and edges expose:
+
+```python
+{
+    "span": "crop failure",
+    "span_start": 5,
+    "span_end": 7,
+    "span_score": 0.83,
+    "grounding_candidates": [
+        {"span": "crop failure", "score": 0.83},
+        {"span": "failure", "score": 0.76},
+    ],
+    "grounding_score_distribution": [...],
+}
+```
+
+`grounding_candidates` keeps the top five alternatives for inspection, while
+`grounding_score_distribution` retains the complete ranked distribution. When
+the winning span contains one word, the legacy `word`, `word_index`, and
+`word_score` attributes are populated as well. The graph metadata records the
+grounding method, model id, candidate spans, and diagnostic shortlist size.
 
 ## Laya's basic vocabulary
 

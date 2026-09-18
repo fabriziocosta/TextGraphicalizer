@@ -168,7 +168,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         if hasattr(self.grounding_backend_, "score_spans"):
             candidates = self.grounding_backend_.generate_candidates(text)
             scores = self.grounding_backend_.score_spans(text, candidates, concepts_by_node)
-            return self._best_spans(scores)
+            return self._best_spans(scores, grounding_terms_by_node)
         if not words:
             return {}
         legacy_targets = {
@@ -196,7 +196,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         if hasattr(self.grounding_backend_, "score_spans"):
             candidates = self.grounding_backend_.generate_candidates(text)
             scores = self.grounding_backend_.score_spans(text, candidates, relations_by_edge)
-            return self._best_spans(scores)
+            return self._best_spans(scores, grounding_terms_by_edge)
         if not words:
             return {}
         legacy_targets = {
@@ -214,13 +214,44 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
     def _best_spans(
         cls,
         scores: Mapping[Any, Sequence[SpanScore]],
+        preferred_terms: Mapping[Any, Sequence[str]] | None = None,
     ) -> dict[Any, dict[str, Any]]:
-        """Attach the best span and a ranked diagnostic shortlist."""
+        """Attach the best span and a ranked diagnostic shortlist.
+
+        STS checkpoints tend to reward longer pieces of an otherwise identical
+        paragraph.  When an ontology provides optional grounding terms, use a
+        matching one-word span as a lexical anchor; the cross-encoder still
+        ranks all candidates and supplies the diagnostic distribution.
+        """
         best: dict[Any, dict[str, Any]] = {}
         for target, candidates in scores.items():
-            ranked = sorted(candidates, key=lambda candidate: candidate.score, reverse=True)
-            if not ranked:
+            score_ranked = sorted(
+                candidates, key=lambda candidate: candidate.score, reverse=True
+            )
+            if not score_ranked:
                 continue
+            terms = (preferred_terms or {}).get(target, ())
+            anchored = [
+                candidate
+                for candidate in score_ranked
+                if candidate.end_word - candidate.start_word == 1
+                and any(cls._grounding_term_matches(candidate.text, term) for term in terms)
+            ]
+            if anchored:
+                term_order = {
+                    candidate: min(
+                        index
+                        for index, term in enumerate(terms)
+                        if cls._grounding_term_matches(candidate.text, term)
+                    )
+                    for candidate in anchored
+                }
+                ranked = sorted(
+                    anchored,
+                    key=lambda candidate: (term_order[candidate], -candidate.score),
+                ) + [candidate for candidate in score_ranked if candidate not in anchored]
+            else:
+                ranked = score_ranked
             winner = ranked[0]
             score_distribution = [
                 {
