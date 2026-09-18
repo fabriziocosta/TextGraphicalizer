@@ -235,6 +235,26 @@ def test_grounding_uses_nli_entailment_scoring(monkeypatch):
     assert graph.nodes["a"]["word_score"] == pytest.approx(0.9)
 
 
+def test_grounding_hypotheses_do_not_copy_candidate_words(monkeypatch):
+    estimator = fitted(monkeypatch)
+    captured = []
+
+    def score_words_contrastive(text, words, targets):
+        del text, words
+        captured.append(targets)
+        return {target: [] for target in targets}
+
+    estimator.grounding_backend_.score_words_contrastive = score_words_contrastive
+    estimator.transform("The infection caused a fever.")
+
+    assert captured
+    assert all(
+        "{word}" not in hypothesis
+        for targets in captured
+        for hypothesis in targets.values()
+    )
+
+
 def test_grounding_loads_stopwords_from_external_yaml(monkeypatch, tmp_path):
     stopwords_path = tmp_path / "stopwords.yaml"
     stopwords_path.write_text("stopwords: [the, caused]\n", encoding="utf-8")

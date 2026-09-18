@@ -98,10 +98,12 @@ instructions, relation options, special tokens, and the configured 512-token
 budget—not against the paragraph token count alone.
 
 For candidate nodes and selected edges, TextGraphicalizer uses an NLI
-cross-encoder. It tests hypotheses such as “the word `drought` directly refers
-to the concept `State`” with the word present and after removing that exact
-word occurrence. The associated word is the candidate with the largest drop in
-entailment probability. Long paragraphs are evaluated with overlapping context
+cross-encoder. It tests a concept or relation hypothesis against the full
+paragraph and after removing each exact candidate word occurrence. The
+associated word is the candidate with the largest drop in entailment
+probability; the candidate word is deliberately not included in the hypothesis
+itself, which avoids selecting words merely because they have been copied into
+the NLI hypothesis. Long paragraphs are evaluated with overlapping context
 windows. Stopwords are removed from this choice set using
 [`stopwords.yaml`](stopwords.yaml); supply `stopwords_path=...` to use another
 YAML file. The result is stored as `word`, `word_index`, and `word_score` on

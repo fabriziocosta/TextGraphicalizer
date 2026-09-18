@@ -386,7 +386,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         concept_by_id = self.ontology_.concept_by_id
         node_descriptions = {
             str(node): (
-                f'The word "{{word}}" directly refers to the concept '
+                f'The paragraph expresses the concept '
                 f'"{graph.nodes[node]["label"]}". '
                 f"{concept_by_id[node].description}"
             )
@@ -404,7 +404,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         relation_by_label = {relation.label: relation for relation in relation_by_id.values()}
         edge_descriptions = {
             (str(source), str(target)): (
-                f'The word "{{word}}" directly expresses the relation '
+                f'The paragraph explicitly expresses the relation '
                 f'"{data["label"]}" from "{graph.nodes[source]["label"]}" '
                 f'to "{graph.nodes[target]["label"]}". '
                 f"{relation_by_label[data['label']].description}"
