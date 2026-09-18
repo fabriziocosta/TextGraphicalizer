@@ -30,17 +30,13 @@ class FakeBackend:
                     "noul": [0.9, 0.8, 0.1][index],
                     "confidence": 0.7,
                 }
-            elif question_id.startswith("ground_"):
+            elif question_id.startswith("ground_node_word_") or question_id.startswith(
+                "ground_edge_word_"
+            ):
                 self.grounding_questions.append(question)
-                keys = list(question["criteria"])
-                probabilities = {
-                    key: 0.9 if key == keys[0] else 0.1
-                    for key in keys
-                }
                 answers[question_id] = {
-                    "type": "choice",
-                    "choice": keys[0],
-                    "probabilities": probabilities,
+                    "type": "noul",
+                    "noul": 0.9,
                     "confidence": 0.6,
                 }
             else:
@@ -176,11 +172,9 @@ def test_grounding_uses_single_non_stopwords_for_selected_items(monkeypatch):
     assert graph.graph["grounding_candidate_words"] == ["infection", "caused", "fever"]
 
     grounding_questions = estimator.backend_.grounding_questions
-    assert len(grounding_questions) == 3
-    assert all(
-        list(question["criteria"]) == ["word_1", "word_2", "word_4", "none"]
-        for question in grounding_questions
-    )
+    assert len(grounding_questions) == 12
+    assert all(question["type"] == "noul" for question in grounding_questions)
+    assert all("exact word" in question["instructions"] for question in grounding_questions)
 
 
 def test_grounding_loads_stopwords_from_external_yaml(monkeypatch, tmp_path):
@@ -194,32 +188,22 @@ def test_grounding_loads_stopwords_from_external_yaml(monkeypatch, tmp_path):
     assert graph.graph["stopwords_path"] == str(stopwords_path)
 
 
-def test_grounding_can_leave_an_item_without_a_direct_word():
-    graph = nx.DiGraph()
-    graph.add_node("a", label="Event")
-    graph.add_edge("a", "b", label="causes")
+def test_grounding_chooses_the_highest_exact_word_probability():
     question_map = {
-        "ground_node_0": ("node", "a"),
-        "ground_edge_0": ("edge", ("a", "b")),
+        "q0": ("a", 0, "program"),
+        "q1": ("a", 1, "drought"),
     }
     answers = {
-        "ground_node_0": {
-            "probabilities": {"word_0": 0.2, "none": 0.8},
-        },
-        "ground_edge_0": {
-            "probabilities": {"word_0": 0.7, "none": 0.3},
-        },
+        "q0": {"noul": 0.2},
+        "q1": {"noul": 0.8},
     }
 
-    TextGraphicalizer._apply_grounding(
-        graph,
+    result = TextGraphicalizer._best_word_answers(
         answers,
         question_map,
-        [(0, "program")],
     )
 
-    assert graph.nodes["a"]["word"] is None
-    assert graph.edges["a", "b"]["word"] == "program"
+    assert result["a"]["word"] == "drought"
 
 
 def test_transform_sequence_returns_graphs(monkeypatch):

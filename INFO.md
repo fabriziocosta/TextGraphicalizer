@@ -18,9 +18,9 @@ TextGraphicalizer uses those answers in two stages by default:
 2. A mixed-integer optimizer chooses a globally consistent subset of that
    evidence and returns a directed NetworkX graph.
 
-After the graph is selected, a lightweight grounding pass asks Laya to choose
-one content word for each retained node and edge. This pass uses direct
-argmax, not another optimization problem.
+The grounding pass asks Laya a separate binary question for each exact
+candidate word and retained graph item, then takes the highest probability.
+It does not use another optimization problem.
 
 Set `use_milp=False` to skip the second-stage optimizer and retain nodes and
 edges by applying `node_threshold` and `edge_threshold` directly. In that mode,
@@ -148,18 +148,20 @@ $$
 
 This gives the label placed on the graph edge.
 
-TextGraphicalizer separately turns the `no_relation` probability into an edge
-existence score:
+TextGraphicalizer keeps the `no_relation` complement as a diagnostic existence
+score, but uses the winning relation probability as the edge-selection score:
 
 $$
-qᵢⱼ = 1 − P(no_relation | i, j, T)
+eᵢⱼ = 1 − P(no_relation | i, j, T)
+
+qᵢⱼ = maxᵣ P(r | i, j, T), for r ≠ no_relation
 $$
 
 Thus, in the current implementation:
 
 - the winning relation probability chooses the edge label;
-- $q_{ij}$ measures how much Laya believes *some* relation exists;
-- the optimizer compares $q_{ij}$ with `edge_threshold`.
+- $e_{ij}$ measures how much Laya believes *some* relation exists;
+- $q_{ij}$ is the score compared with `edge_threshold` by the optimizer.
 
 For example, suppose Laya returns:
 
@@ -172,11 +174,11 @@ no_relation  0.20
 Then the edge label is `causes`, and its edge probability is
 
 $$
-qᵢⱼ = 1 − 0.20 = 0.80
+eᵢⱼ = 1 − 0.20 = 0.80, \qquad qᵢⱼ = 0.72
 $$
 
-The label probability and the edge existence probability are related, but they
-are not the same number.
+The graph stores `probability=qᵢⱼ`, `relation_probability=qᵢⱼ`, and
+`existence_probability=eᵢⱼ`.
 
 ### `score`: a position on an ordered scale
 
@@ -357,10 +359,10 @@ part_of      0.04
 no_relation  0.22
 ```
 
-The selected label is `causes`, while the edge existence score is
+The selected label is `causes`, while the edge selection score is
 
 $$
-q = 1 − 0.22 = 0.78
+q = 0.74
 $$
 
 With $\tau_E=0.5$, both the node evidence and this edge evidence are above

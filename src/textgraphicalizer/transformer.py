@@ -134,127 +134,122 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         ]
 
     @staticmethod
-    def _word_criteria(words: Sequence[tuple[int, str]]) -> dict[str, str]:
-        return {
-            f"word_{index}": word
-            for index, word in words
-        }
+    def _marked_word_state(text: str, words: Sequence[tuple[int, str]]) -> str:
+        """Mark every candidate token so word questions refer to exact tokens."""
+        marked = text
+        token_indices = {index for index, _ in words}
+        matches = list(_WORD_RE.finditer(text))
+        for index, match in reversed(list(enumerate(matches))):
+            if index not in token_indices:
+                continue
+            token = match.group(0)
+            marker = f"<word_{index}>{token}</word_{index}>"
+            marked = marked[:match.start()] + marker + marked[match.end():]
+        return marked
 
-    def _grounding_questions(
+    def _node_word_questions(
         self,
-        graph: nx.DiGraph,
+        nodes: Sequence[NodeEvidence],
         words: Sequence[tuple[int, str]],
-    ) -> tuple[dict[str, dict[str, Any]], dict[str, tuple[str, str | tuple[str, str]]]]:
-        """Build one choice question per selected node and edge."""
-        word_criteria = self._word_criteria(words)
+    ) -> tuple[dict[str, dict[str, Any]], dict[str, tuple[str, int, str]]]:
+        """Ask one binary question for every concept/word pair."""
         questions: dict[str, dict[str, Any]] = {}
-        question_map: dict[str, tuple[str, str | tuple[str, str]]] = {}
-
-        for index, node_id in enumerate(graph.nodes):
-            question_id = f"ground_node_{index}"
-            label = graph.nodes[node_id].get("label", node_id)
-            concept = self.ontology_.concept_by_id.get(str(node_id))
+        question_map: dict[str, tuple[str, int, str]] = {}
+        for node_index, node in enumerate(nodes):
+            concept = self.ontology_.concept_by_id.get(node.concept_id)
             description = (
                 f" Concept description: {concept.description}"
                 if concept is not None
                 else ""
             )
-            questions[question_id] = {
-                "type": "choice",
-                "instructions": (
-                    f'Which single word, if any, explicitly names the concept '
-                    f'"{label}"? Choose "none" when no word directly names '
-                    f"the concept; do not choose a generic associated word.{description}"
-                ),
-                "criteria": {
-                    **word_criteria,
-                    "none": "No single word directly names this concept.",
-                },
-            }
-            question_map[question_id] = ("node", str(node_id))
+            for word_index, (token_index, word) in enumerate(words):
+                question_id = f"ground_node_word_{node_index}_{word_index}"
+                questions[question_id] = {
+                    "type": "noul",
+                    "instructions": (
+                        f'Is the exact word "{word}" at token position {token_index}, '
+                        f'marked <word_{token_index}>, an explicit expression of '
+                        f'the concept "{node.label}" in this sentence? Answer '
+                        f"true only when the word directly names the concept, "
+                        f"not when it is merely related.{description}"
+                    ),
+                }
+                question_map[question_id] = (node.concept_id, token_index, word)
+        return questions, question_map
 
-        for index, (source, target, data) in enumerate(graph.edges(data=True)):
-            question_id = f"ground_edge_{index}"
+    def _edge_word_questions(
+        self,
+        graph: nx.DiGraph,
+        node_words: Mapping[str, Mapping[str, Any]],
+        words: Sequence[tuple[int, str]],
+    ) -> tuple[dict[str, dict[str, Any]], dict[str, tuple[tuple[str, str], int, str]]]:
+        """Ask one binary question for every selected edge/word pair."""
+        questions: dict[str, dict[str, Any]] = {}
+        question_map: dict[str, tuple[tuple[str, str], int, str]] = {}
+        for edge_index, (source, target, data) in enumerate(graph.edges(data=True)):
+            source_word = node_words.get(str(source), {}).get("word") or "no explicit word"
+            target_word = node_words.get(str(target), {}).get("word") or "no explicit word"
             source_label = graph.nodes[source].get("label", source)
             target_label = graph.nodes[target].get("label", target)
             relation_label = data.get("label", "relation")
-            relation = next(
-                (
-                    candidate
-                    for candidate in self.ontology_.relations
-                    if candidate.label == relation_label
-                ),
-                None,
-            )
-            description = (
-                f" Relation description: {relation.description}"
-                if relation is not None
-                else ""
-            )
-            questions[question_id] = {
-                "type": "choice",
-                "instructions": (
-                    f'Which single word, if any, explicitly expresses the '
-                    f'relation "{relation_label}" from "{source_label}" '
-                    f'to "{target_label}"? Choose "none" when the relation '
-                    f"is only inferred; do not choose a concept word.{description}"
-                ),
-                "criteria": {
-                    **word_criteria,
-                    "none": "No single word directly expresses this relation.",
-                },
-            }
-            question_map[question_id] = ("edge", (str(source), str(target)))
-
+            for word_index, (token_index, word) in enumerate(words):
+                question_id = f"ground_edge_word_{edge_index}_{word_index}"
+                questions[question_id] = {
+                    "type": "noul",
+                    "instructions": (
+                        f'Is the exact word "{word}" at token position {token_index}, '
+                        f'marked <word_{token_index}>, an explicit expression of '
+                        f'the relation "{relation_label}" from "{source_label}" '
+                        f'(word: "{source_word}") to "{target_label}" '
+                        f'(word: "{target_word}") in this sentence? Answer '
+                        "true only when the word directly expresses the relation, "
+                        "not when it names one of the concepts."
+                    ),
+                }
+                question_map[question_id] = ((str(source), str(target)), token_index, word)
         return questions, question_map
 
     @staticmethod
-    def _apply_grounding(
-        graph: nx.DiGraph,
+    def _best_word_answers(
         answers: Mapping[str, Any],
-        question_map: Mapping[str, tuple[str, str | tuple[str, str]]],
-        words: Sequence[tuple[int, str]],
-    ) -> None:
-        """Attach the highest-probability word independently to each item."""
-        candidate_keys = {f"word_{index}": (index, word) for index, word in words}
-        for question_id, (kind, target) in question_map.items():
+        question_map: Mapping[str, tuple[Any, int, str]],
+    ) -> dict[Any, dict[str, Any]]:
+        """Choose the highest-probability exact word for each target."""
+        best: dict[Any, dict[str, Any]] = {}
+        for question_id, (target, token_index, word) in question_map.items():
             answer = answers.get(question_id)
             if not isinstance(answer, Mapping):
                 raise ValueError(f"Laya did not return an answer for {question_id}")
-            probabilities = answer.get("probabilities")
-            if not isinstance(probabilities, Mapping):
-                raise ValueError(
-                    f"Laya response for {question_id} lacks word probabilities"
-                )
-            available = {
-                key: float(probability)
-                for key, probability in probabilities.items()
-                if key in candidate_keys or key == "none"
-            }
-            if not available:
-                raise ValueError(
-                    f"Laya response for {question_id} lacks probabilities for candidate words"
-                )
-            available.setdefault("none", 0.0)
-            best_key = max(available, key=available.get)
-            if best_key == "none":
-                attributes = {
-                    "word": None,
-                    "word_index": None,
-                    "word_probability": available[best_key],
-                }
-            else:
-                word_index, word = candidate_keys[best_key]
-                attributes = {
+            value = answer.get("noul")
+            if value is None:
+                raise ValueError(f"Laya response for {question_id} lacks noul")
+            probability = float(value)
+            current = best.get(target)
+            if current is None or probability > current["word_probability"]:
+                best[target] = {
                     "word": word,
-                    "word_index": word_index,
-                    "word_probability": available[best_key],
+                    "word_index": token_index,
+                    "word_probability": probability,
                 }
-            if kind == "node":
-                graph.nodes[target].update(attributes)  # type: ignore[index]
-            else:
-                source, destination = target  # type: ignore[misc]
-                graph.edges[source, destination].update(attributes)
+        return best
+
+    @staticmethod
+    def _attach_node_words(
+        graph: nx.DiGraph,
+        node_words: Mapping[str, Mapping[str, Any]],
+    ) -> None:
+        for node in graph.nodes:
+            if str(node) in node_words:
+                graph.nodes[node].update(node_words[str(node)])
+
+    @staticmethod
+    def _attach_edge_words(
+        graph: nx.DiGraph,
+        edge_words: Mapping[tuple[str, str], Mapping[str, Any]],
+    ) -> None:
+        for source, target in graph.edges:
+            if (str(source), str(target)) in edge_words:
+                graph.edges[source, target].update(edge_words[(str(source), str(target))])
 
     @staticmethod
     def _display_edges(
@@ -347,6 +342,19 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             if self.use_milp
             else [node for node in node_evidence if node.probability >= self.node_threshold]
         )
+        content_words = self._content_words(text)
+        grounding_state = self._marked_word_state(text, content_words)
+        node_word_questions, node_word_map = self._node_word_questions(
+            relation_nodes, content_words
+        )
+        node_word_result = (
+            self.backend_.predict(grounding_state, node_word_questions)
+            if node_word_questions
+            else {"answers": {}}
+        )
+        node_words = self._best_word_answers(
+            node_word_result.get("answers", {}), node_word_map
+        )
         edge_questions: dict[str, dict[str, Any]] = {}
         pair_map: dict[str, tuple[str, str]] = {}
         for source in relation_nodes:
@@ -358,6 +366,8 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                     continue
                 question_id = f"edge_{len(pair_map)}"
                 pair_map[question_id] = (source.concept_id, target.concept_id)
+                source_word = node_words.get(source.concept_id, {}).get("word")
+                target_word = node_words.get(target.concept_id, {}).get("word")
                 criteria = {
                     relation.id: f"{relation.label}: {relation.description}"
                     for relation in relations
@@ -367,7 +377,10 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                     "type": "choice",
                     "instructions": (
                         f'Which relation, if any, is expressed from "{source.label}" '
-                        f'to "{target.label}" in this paragraph?'
+                        f'to "{target.label}" in this paragraph? The source '
+                        f'word is "{source_word or "not directly grounded"}" and '
+                        f'the target word is "{target_word or "not directly grounded"}". '
+                        "Choose no_relation unless the relation is explicitly stated."
                     ),
                     "criteria": criteria,
                 }
@@ -402,14 +415,15 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                 key=lambda relation: relation_probabilities[relation],
             )
             existence_probability = max(0.0, min(1.0, 1.0 - no_relation_probability))
+            relation_probability = relation_probabilities[relation_id]
             candidate_edges.append(
                 EdgeEvidence(
                     source=source_id,
                     target=target_id,
                     label=relation_by_id[relation_id].label,
-                    probability=existence_probability,
+                    probability=relation_probability,
                     confidence=_confidence(answer),
-                    relation_probability=relation_probabilities[relation_id],
+                    relation_probability=relation_probability,
                 )
             )
 
@@ -429,19 +443,20 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                 node_threshold=self.node_threshold,
                 edge_threshold=self.edge_threshold,
             )
-        grounding_questions: dict[str, dict[str, Any]] = {}
-        content_words = self._content_words(text)
-        if content_words and (graph.nodes or graph.edges):
-            grounding_questions, grounding_map = self._grounding_questions(
-                graph, content_words
-            )
-            grounding_result = self.backend_.predict(text, grounding_questions)
-            self._apply_grounding(
-                graph,
-                grounding_result.get("answers", {}),
-                grounding_map,
-                content_words,
-            )
+        self._attach_node_words(graph, node_words)
+        edge_word_questions, edge_word_map = self._edge_word_questions(
+            graph, node_words, content_words
+        )
+        edge_word_result = (
+            self.backend_.predict(grounding_state, edge_word_questions)
+            if edge_word_questions
+            else {"answers": {}}
+        )
+        edge_words = self._best_word_answers(
+            edge_word_result.get("answers", {}), edge_word_map
+        )
+        self._attach_edge_words(graph, edge_words)
+        grounding_questions = {**node_word_questions, **edge_word_questions}
         graph.graph.update(
             {
                 "ontology_version": self.ontology_.version,
@@ -462,7 +477,13 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                 "stopwords_count": len(self.stopwords_),
                 "grounding_candidate_words": [word for _, word in content_words],
                 "input_truncated": self.backend_.was_truncated(
-                    text, {**node_questions, **edge_questions, **grounding_questions}
+                    text,
+                    {
+                        **node_questions,
+                        **node_word_questions,
+                        **edge_questions,
+                        **edge_word_questions,
+                    },
                 ),
             }
         )

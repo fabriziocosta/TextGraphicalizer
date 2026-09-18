@@ -81,7 +81,7 @@ print(graph.edges(data=True))
 The estimator returns a directed graph for one string, or a list of graphs
 when passed a sequence of strings. Nodes contain `label`, `probability`, and,
 when available, Laya's distinct `confidence` value. Edges retain `probability`
-as an alias for existence probability and also expose separate
+as the winning relation probability and also expose separate
 `existence_probability` and `relation_probability` attributes.
 
 With the default `use_milp=True`, all ontology concepts are scored before
@@ -96,14 +96,15 @@ full Laya sequence for every node and relation question, including question
 instructions, relation options, special tokens, and the configured 512-token
 budget—not against the paragraph token count alone.
 
-For every selected node and edge, TextGraphicalizer also asks Laya to choose
-the best single content word from the sentence. Stopwords are removed from
+For candidate nodes and selected edges, TextGraphicalizer asks Laya a separate
+binary question for each exact sentence word and chooses the highest-probability
+word. Stopwords are removed from
 this choice set using [`stopwords.yaml`](stopwords.yaml), while the complete
 sentence is still passed to Laya. Supply `stopwords_path=...` to use another
 YAML file. The result is stored as `word`, `word_index`, and
 `word_probability` on the corresponding node or edge. Selection is direct
-independent argmax over Laya's word probabilities, with `word=None` when no
-candidate directly expresses the item; no additional optimizer is used.
+independent argmax over Laya's exact-word probabilities; no additional
+optimizer is used.
 The checked-in default is derived from the [Snowball English stopword
 list](https://snowballstem.org/algorithms/english/stop.txt).
 
