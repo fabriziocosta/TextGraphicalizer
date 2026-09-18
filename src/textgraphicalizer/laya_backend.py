@@ -9,6 +9,7 @@ from numbers import Real
 from typing import Any, Mapping
 
 from .errors import LayaInferenceError, LayaModelError, LayaResponseError
+from .hf_quiet import silence_model_download_output
 
 DEFAULT_LAYA_MODEL_REVISION = "7c76b622dfc5cac71b2dc1c29873efe2ce509a05"
 logger = logging.getLogger(__name__)
@@ -44,6 +45,7 @@ class LayaBackend:
             self.model_path,
             self.device,
         )
+        silence_model_download_output()
         try:
             import laya
         except ImportError as exc:

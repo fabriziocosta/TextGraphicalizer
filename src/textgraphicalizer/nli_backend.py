@@ -6,6 +6,8 @@ import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from .hf_quiet import silence_model_download_output
+
 
 class NliGroundingBackend:
     """Score word/concept hypotheses with an NLI-fine-tuned encoder."""
@@ -30,6 +32,7 @@ class NliGroundingBackend:
     def load(self) -> "NliGroundingBackend":
         if self.model is not None:
             return self
+        silence_model_download_output()
         try:
             import torch
             from transformers import AutoModelForSequenceClassification, AutoTokenizer
