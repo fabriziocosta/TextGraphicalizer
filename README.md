@@ -7,17 +7,23 @@ decision model and a SciPy mixed-integer optimizer.
 ## Installation
 
 ```bash
-source ~/.venvs/py312/bin/activate
+# Run this from the Python environment you want to use for the project.
 python -m pip install -e .
 ```
 
-For the notebook, install the optional Jupyter dependencies and use the
-existing `py312` kernel:
+For the notebook, install the optional Jupyter dependencies and register that
+same environment as a project-specific kernel:
 
 ```bash
 python -m pip install -e ".[notebook]"
-python -m ipykernel install --user --name py312 --display-name "py312"
+python -m ipykernel install --user --name textgraphicalizer --display-name "TextGraphicalizer"
 ```
+
+If you need a fresh environment, create it in the repository with
+`python -m venv .venv` and activate it. On macOS/Linux use
+`source .venv/bin/activate`; on Windows
+PowerShell use `.venv\Scripts\Activate.ps1`. The commands above always use
+the interpreter selected by `python`.
 
 Constructing `TextGraphicalizer()` automatically initializes Laya and, by
 default, the span-grounding cross-encoder;
