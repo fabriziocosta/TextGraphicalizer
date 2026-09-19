@@ -162,8 +162,8 @@ def test_use_llm_selects_openai_grounding_backend(monkeypatch):
             assert set(edges) == {("a", "b")}
             return (
                 {
-                    "a": {"span": "A", "span_start": 0, "span_end": 1},
-                    "b": {"span": "B", "span_start": 2, "span_end": 3},
+                    "a": {"paraphrase": "the first concept"},
+                    "b": {"paraphrase": "the second concept"},
                 },
                 {},
             )
@@ -180,10 +180,11 @@ def test_use_llm_selects_openai_grounding_backend(monkeypatch):
     estimator = TextGraphicalizer(ONTOLOGY, use_llm=True)
     graph = estimator.transform("A causes B.")
 
-    assert graph.nodes["a"]["span"] == "A"
-    assert graph.nodes["b"]["span"] == "B"
+    assert graph.nodes["a"]["paraphrase"] == "the first concept"
+    assert graph.nodes["b"]["paraphrase"] == "the second concept"
     assert graph.graph["grounding_method"] == "openai_llm_graph_assignment"
     assert graph.graph["grounding_model_id"] == "gpt-4.1-mini"
+    assert graph.graph["grounding_value_type"] == "paraphrase"
 
 
 def test_transform_refreshes_grounding_backend_when_use_llm_changes(monkeypatch):
@@ -627,9 +628,13 @@ def test_display_d3_returns_force_directed_html(monkeypatch):
 
     assert "d3@7" in rendered.data
     assert "window.d3 = {};" in rendered.data
+    assert "const define = undefined" in rendered.data
     assert "unpkg.com/d3@7.9.0/dist/d3.min.js" in rendered.data
     assert "window.__textGraphicalizerD3PromiseV2 = null" in rendered.data
     assert "forceSimulation" in rendered.data
+    assert '"#94a3b8"' in rendered.data
+    assert '"#64748b"' not in rendered.data
+    assert 'append("circle")' not in rendered.data
     assert "animal" in rendered.data
     assert "is a" not in rendered.data
 

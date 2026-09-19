@@ -37,8 +37,10 @@ ensure the configured span-grounding checkpoint is cached.
 Set `use_llm=True` to replace cross-encoder grounding with one structured
 OpenAI Responses API call over the selected graph. The default model is
 `gpt-4.1-mini`; set `llm_model` to another OpenAI model ID if needed. The
-backend reads `OPENAI_API_KEY` from the environment and requires the evidence
-it returns to be an exact substring of the document.
+backend reads `OPENAI_API_KEY` from the environment and asks for a concise,
+context-sensitive paraphrase for each selected concept and relation. These
+LLM paraphrases are allowed to express implicit concepts and are stored as
+`paraphrase`; unlike cross-encoder spans, they do not have document offsets.
 
 By default, graph selection uses the MILP optimizer. Set `use_milp=False` to
 select nodes with `node_threshold` and edges with `edge_threshold` directly;
@@ -162,6 +164,9 @@ context fragments, so a repeated phrase such as `Fox saw some` does not become
 the grounding span for every concept in a story.
 Node spans are then resolved with a linear assignment over distinct surface
 mentions; weak competing assignments are left ungrounded rather than forced.
+When `use_llm=True`, this span-assignment process is replaced by the LLM's
+context-sensitive paraphrases, so multiple concepts may be described even
+when the document does not contain distinct matching surface spans.
 
 ## Rendering graphs
 
@@ -171,7 +176,7 @@ duplicating visualization code:
 
 When reciprocal edges have the same relation label, the renderer displays
 them as one undirected edge. Node and edge annotations include both the
-ontology/relation label and the associated sentence span.
+ontology/relation label and the associated span or LLM paraphrase.
 Node labels are rendered lowercase in normal-weight monospace; grounded spans
 use normal-weight serif text.
 

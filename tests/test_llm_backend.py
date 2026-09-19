@@ -26,7 +26,7 @@ class FakeClient:
         self.responses = FakeResponses(payload)
 
 
-def test_llm_grounding_assigns_exact_node_and_edge_evidence():
+def test_llm_grounding_assigns_node_and_edge_paraphrases():
     graph = nx.DiGraph()
     graph.add_node("animal", label="Animal")
     graph.add_node("food", label="Food")
@@ -34,15 +34,15 @@ def test_llm_grounding_assigns_exact_node_and_edge_evidence():
     client = FakeClient(
         {
             "nodes": [
-                {"node_id": "animal", "evidence": "fox"},
-                {"node_id": "food", "evidence": "grapes"},
+                {"node_id": "animal", "paraphrase": "the hungry fox"},
+                {"node_id": "food", "paraphrase": "fruit hanging overhead"},
             ],
             "edges": [
                 {
                     "source_id": "animal",
                     "target_id": "food",
                     "relation_label": "causes",
-                    "evidence": "caused",
+                    "paraphrase": "the fox's attempt to reach the fruit",
                 }
             ],
         }
@@ -61,26 +61,29 @@ def test_llm_grounding_assigns_exact_node_and_edge_evidence():
         },
     )
 
-    assert nodes["animal"]["span"] == "Fox"
-    assert nodes["animal"]["span_start"] == 1
-    assert nodes["food"]["span"] == "Grapes"
-    assert edges[("animal", "food")]["span"] == "caused"
+    assert nodes["animal"]["paraphrase"] == "the hungry fox"
+    assert "span" not in nodes["animal"]
+    assert nodes["food"]["paraphrase"] == "fruit hanging overhead"
+    assert edges[("animal", "food")]["paraphrase"] == (
+        "the fox's attempt to reach the fruit"
+    )
     assert client.responses.kwargs["model"] == "gpt-4.1-mini"
     assert client.responses.kwargs["text"]["format"]["type"] == "json_schema"
     prompt = client.responses.kwargs["input"][1]["content"]
     assert 'node_id="animal"' in prompt
     assert "The Fox caused the Grapes" in prompt
+    assert "does not have to be a verbatim substring" in client.responses.kwargs["input"][0]["content"]
 
 
-def test_llm_grounding_ignores_duplicate_and_non_verbatim_evidence():
+def test_llm_grounding_accepts_repeated_and_non_verbatim_paraphrases():
     graph = nx.DiGraph()
     graph.add_node("a", label="A")
     graph.add_node("b", label="B")
     client = FakeClient(
         {
             "nodes": [
-                {"node_id": "a", "evidence": "same phrase"},
-                {"node_id": "b", "evidence": "invented phrase"},
+                {"node_id": "a", "paraphrase": "the first idea"},
+                {"node_id": "b", "paraphrase": "the first idea"},
             ],
             "edges": [],
         }
@@ -97,7 +100,30 @@ def test_llm_grounding_ignores_duplicate_and_non_verbatim_evidence():
         {},
     )
 
-    assert set(nodes) == {"a"}
+    assert set(nodes) == {"a", "b"}
+
+
+def test_llm_grounding_rejects_empty_or_overlong_paraphrases():
+    graph = nx.DiGraph()
+    graph.add_node("a", label="A")
+    client = FakeClient(
+        {
+            "nodes": [
+                {"node_id": "a", "paraphrase": ""},
+            ],
+            "edges": [],
+        }
+    )
+    backend = OpenAIGroundingBackend(client=client)
+
+    nodes, _ = backend.ground_graph(
+        "A document.",
+        graph,
+        {"a": ConceptDescription("A", "A concept.")},
+        {},
+    )
+
+    assert nodes == {}
 
 
 def test_llm_backend_requires_system_api_key(monkeypatch):

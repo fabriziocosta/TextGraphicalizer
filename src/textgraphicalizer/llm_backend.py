@@ -19,9 +19,9 @@ GROUNDING_RESPONSE_SCHEMA: dict[str, Any] = {
                 "type": "object",
                 "properties": {
                     "node_id": {"type": "string"},
-                    "evidence": {"type": "string"},
+                    "paraphrase": {"type": "string"},
                 },
-                "required": ["node_id", "evidence"],
+                "required": ["node_id", "paraphrase"],
                 "additionalProperties": False,
             },
         },
@@ -33,13 +33,13 @@ GROUNDING_RESPONSE_SCHEMA: dict[str, Any] = {
                     "source_id": {"type": "string"},
                     "target_id": {"type": "string"},
                     "relation_label": {"type": "string"},
-                    "evidence": {"type": "string"},
+                    "paraphrase": {"type": "string"},
                 },
                 "required": [
                     "source_id",
                     "target_id",
                     "relation_label",
-                    "evidence",
+                    "paraphrase",
                 ],
                 "additionalProperties": False,
             },
@@ -51,9 +51,9 @@ GROUNDING_RESPONSE_SCHEMA: dict[str, Any] = {
 
 
 class OpenAIGroundingBackend:
-    """Use an OpenAI model to assign document evidence to a selected graph."""
+    """Use an OpenAI model to assign document paraphrases to a selected graph."""
 
-    _MAX_EVIDENCE_WORDS = 8
+    _MAX_PARAPHRASE_WORDS = 12
 
     def __init__(
         self,
@@ -130,13 +130,15 @@ class OpenAIGroundingBackend:
         if self.client is None:
             raise RuntimeError("OpenAI client is not loaded")
         system_prompt = (
-            "You assign exact evidence from a document to a selected concept graph. "
-            "Return only the requested structured output. Evidence must be copied "
-            "verbatim as a contiguous substring of the document, preserving its "
-            "capitalization. Prefer a meaningful word or short phrase, not generic "
-            "function words or surrounding context. Assign distinct evidence to "
-            "different nodes when the document supports that; use an empty string "
-            "when no clear evidence exists."
+            "You assign concise, context-sensitive paraphrases from a document to "
+            "a selected concept graph. Return only the requested structured output. "
+            "A paraphrase is a newly worded expression of how the document conveys "
+            "the concept or relation; it does not have to be a verbatim substring. "
+            "Use a meaningful phrase or very short sentence of at most twelve words, "
+            "not a generic function word or the ontology label by itself. Give each "
+            "node the best supported paraphrase, including when the concept is "
+            "implicit or abstract. Use an empty string only when the document gives "
+            "no meaningful support at all."
         )
         user_prompt = (
             "DOCUMENT:\n"
@@ -144,11 +146,12 @@ class OpenAIGroundingBackend:
             "SELECTED CONCEPT GRAPH:\n"
             f"{self._graph_description(graph, concepts)}\n\n"
             "TASK:\n"
-            "For every listed node, choose the word or short phrase from the "
-            "document that best expresses that concept, using its connected nodes "
-            "and relations as context. For every listed edge, choose the exact "
-            "word or short phrase that expresses the relation, or use an empty "
-            "string if no relation expression is present. Do not invent text."
+            "For every listed node, write the short paraphrase that best explains "
+            "how the document expresses that concept, using its connected nodes "
+            "and relations as context. For every listed edge, write a short "
+            "paraphrase of how that relation is expressed in the document. Prefer "
+            "different paraphrases when the concepts are distinct, but do not force "
+            "a distinction that the document does not support."
         )
         response = self.client.responses.create(
             model=self.model_id,
@@ -175,49 +178,22 @@ class OpenAIGroundingBackend:
         return payload
 
     @classmethod
-    def _resolve_evidence(
-        cls,
-        text: str,
-        evidence: Any,
-    ) -> tuple[str, int, int] | None:
-        if not isinstance(evidence, str):
+    def _normalize_paraphrase(cls, paraphrase: Any) -> str | None:
+        if not isinstance(paraphrase, str):
             return None
-        tokens = [token.casefold() for token in _WORD_RE.findall(evidence)]
-        if not tokens or len(tokens) > cls._MAX_EVIDENCE_WORDS:
+        normalized = " ".join(paraphrase.split())
+        tokens = _WORD_RE.findall(normalized)
+        if not tokens or len(tokens) > cls._MAX_PARAPHRASE_WORDS:
             return None
-        matches = list(_WORD_RE.finditer(text))
-        for start in range(len(matches) - len(tokens) + 1):
-            candidate_tokens = [
-                match.group(0).casefold()
-                for match in matches[start:start + len(tokens)]
-            ]
-            if candidate_tokens != tokens:
-                continue
-            end = start + len(tokens)
-            return text[matches[start].start():matches[end - 1].end()], start, end
-        return None
+        return normalized
 
     @staticmethod
-    def _span_data(span: tuple[str, int, int]) -> dict[str, Any]:
-        value, start, end = span
-        data: dict[str, Any] = {
-            "span": value,
-            "span_start": start,
-            "span_end": end,
-            "span_score": 1.0,
-            "grounding_candidates": [{"span": value, "score": 1.0}],
-            "grounding_score_distribution": [
-                {
-                    "span": value,
-                    "start_word": start,
-                    "end_word": end,
-                    "score": 1.0,
-                }
-            ],
+    def _paraphrase_data(paraphrase: str) -> dict[str, Any]:
+        return {
+            "paraphrase": paraphrase,
+            "grounding_score": 1.0,
+            "grounding_method": "openai_llm_paraphrase",
         }
-        if end - start == 1:
-            data.update({"word": value, "word_index": start, "word_score": 1.0})
-        return data
 
     def ground_graph(
         self,
@@ -226,10 +202,9 @@ class OpenAIGroundingBackend:
         concepts: Mapping[str, Any],
         edges: Mapping[tuple[str, str], Any],
     ) -> tuple[dict[str, dict[str, Any]], dict[tuple[str, str], dict[str, Any]]]:
-        """Assign node and edge evidence with one structured model call."""
+        """Assign node and edge paraphrases with one structured model call."""
         payload = self._request_assignments(text, graph, concepts)
         node_result: dict[str, dict[str, Any]] = {}
-        used_node_surfaces: set[str] = set()
         raw_nodes = payload.get("nodes", [])
         if isinstance(raw_nodes, list):
             for item in raw_nodes:
@@ -238,11 +213,12 @@ class OpenAIGroundingBackend:
                 node_id = str(item.get("node_id", ""))
                 if node_id not in concepts or node_id in node_result:
                     continue
-                resolved = self._resolve_evidence(text, item.get("evidence", ""))
-                if resolved is None or resolved[0].casefold() in used_node_surfaces:
+                paraphrase = self._normalize_paraphrase(
+                    item.get("paraphrase", item.get("evidence", ""))
+                )
+                if paraphrase is None:
                     continue
-                used_node_surfaces.add(resolved[0].casefold())
-                node_result[node_id] = self._span_data(resolved)
+                node_result[node_id] = self._paraphrase_data(paraphrase)
 
         edge_result: dict[tuple[str, str], dict[str, Any]] = {}
         raw_edges = payload.get("edges", [])
@@ -253,7 +229,9 @@ class OpenAIGroundingBackend:
                 key = (str(item.get("source_id", "")), str(item.get("target_id", "")))
                 if key not in edges or key in edge_result:
                     continue
-                resolved = self._resolve_evidence(text, item.get("evidence", ""))
-                if resolved is not None:
-                    edge_result[key] = self._span_data(resolved)
+                paraphrase = self._normalize_paraphrase(
+                    item.get("paraphrase", item.get("evidence", ""))
+                )
+                if paraphrase is not None:
+                    edge_result[key] = self._paraphrase_data(paraphrase)
         return node_result, edge_result

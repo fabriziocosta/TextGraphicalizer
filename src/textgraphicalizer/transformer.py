@@ -626,31 +626,34 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
 
             collapsed_pairs.add(pair)
             merged = dict(data)
-            reverse_span = reverse_data.get("span")
-            span = data.get("span")
-            spans = list(dict.fromkeys(
-                str(value) for value in (span, reverse_span) if value is not None
-            ))
-            if spans:
-                merged["span"] = " / ".join(spans)
-            reverse_word = reverse_data.get("word")
-            word = data.get("word")
-            words = list(dict.fromkeys(
-                str(value) for value in (word, reverse_word) if value is not None
-            ))
-            if words:
-                merged["word"] = " / ".join(words)
+            for field in ("paraphrase", "span", "word"):
+                display_values = list(dict.fromkeys(
+                    str(value)
+                    for value in (data.get(field), reverse_data.get(field))
+                    if value is not None
+                ))
+                if display_values:
+                    merged[field] = " / ".join(display_values)
             for field in ("probability", "existence_probability", "relation_probability"):
-                values = [
+                numeric_values = [
                     float(value)
                     for value in (data.get(field), reverse_data.get(field))
                     if value is not None
                 ]
-                if values:
-                    merged[field] = max(values)
+                if numeric_values:
+                    merged[field] = max(numeric_values)
             undirected.append((source, target, merged))
 
         return undirected, directed
+
+    @staticmethod
+    def _grounding_display_value(data: Mapping[str, Any]) -> str | None:
+        """Return the human-readable grounding, whether span or paraphrase."""
+        for field in ("paraphrase", "span", "word"):
+            value = data.get(field)
+            if value is not None and str(value):
+                return str(value)
+        return None
 
     @staticmethod
     def _node_display_parts(
@@ -659,9 +662,9 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         show_probabilities: bool,
     ) -> list[tuple[str, str]]:
         parts = [(str(data.get("label", node)).lower(), "monospace")]
-        grounding = data.get("span", data.get("word"))
+        grounding = TextGraphicalizer._grounding_display_value(data)
         if grounding is not None:
-            parts.append((str(grounding), "serif"))
+            parts.append((grounding, "serif"))
         if show_probabilities:
             parts.append((f"{float(data.get('probability', 0.0)):.2f}", "serif"))
         return parts
@@ -735,9 +738,9 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         parts = []
         if data.get("label") is not None:
             parts.append(str(data["label"]))
-        grounding = data.get("span", data.get("word"))
+        grounding = TextGraphicalizer._grounding_display_value(data)
         if grounding is not None:
-            parts.append(str(grounding))
+            parts.append(grounding)
         if show_probabilities:
             parts.append(f"{float(data.get('probability', 0.0)):.2f}")
         return "\n".join(parts)
@@ -959,6 +962,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                     self.llm_model if self.use_llm else self.grounding_model_id
                 ),
                 "llm_model": self.llm_model if self.use_llm else None,
+                "grounding_value_type": "paraphrase" if self.use_llm else "span",
                 "grounding_top_k": self._GROUNDING_TOP_K,
                 "input_truncated": self.backend_.was_truncated(
                     text,
@@ -1322,11 +1326,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             {
                 "id": str(node),
                 "label": str(data.get("label", node)).lower(),
-                "evidence": (
-                    str(data.get("span", data.get("word")))
-                    if data.get("span", data.get("word")) is not None
-                    else ""
-                ),
+                "evidence": self._grounding_display_value(data) or "",
                 "probability": float(data.get("probability", 0.0)),
             }
             for node, data in graph.nodes(data=True)
@@ -1379,7 +1379,10 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
     if (inlineD3Source) {
       try {
         const script = document.createElement("script");
-        script.textContent = inlineD3Source;
+        // Jupyter exposes RequireJS' AMD `define`; hide it so D3 creates its
+        // global `d3` object instead of registering an inaccessible module.
+        script.textContent = "(function () { const define = undefined;\\n"
+          + inlineD3Source + "\\n}).call(window);";
         document.head.appendChild(script);
         if (window.d3) return Promise.resolve(window.d3);
         inlineError = new Error("Inline D3.js source did not create window.d3");
@@ -1444,20 +1447,19 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
       .attr("orient", "auto")
       .append("path")
       .attr("d", "M0,-5L10,0L0,5")
-      .attr("fill", "#64748b");
+      .attr("fill", "#94a3b8");
 
     const layer = svg.append("g");
     svg.call(d3.zoom().scaleExtent([0.25, 4]).on("zoom", (event) => {
       layer.attr("transform", event.transform);
     }));
-    const color = d3.scaleSequential(d3.interpolateViridis).domain([0, 1]);
     const simulation = d3.forceSimulation(data.nodes)
       .force("link", d3.forceLink(data.links).id((d) => d.id).distance(150))
       .force("charge", d3.forceManyBody().strength(-480))
       .force("center", d3.forceCenter(width / 2, height / 2))
       .force("collision", d3.forceCollide().radius(42));
     const links = layer.append("g")
-      .attr("stroke", "#64748b")
+      .attr("stroke", "#94a3b8")
       .attr("stroke-opacity", 0.7)
       .selectAll("line")
       .data(data.links)
@@ -1481,11 +1483,6 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         .on("start", dragstarted)
         .on("drag", dragged)
         .on("end", dragended));
-    nodes.append("circle")
-      .attr("r", (d) => 12 + 10 * d.probability)
-      .attr("fill", (d) => color(d.probability))
-      .attr("stroke", "white")
-      .attr("stroke-width", 2);
     if (__SHOW_NODE_LABELS__) {
       nodes.append("text")
         .attr("text-anchor", "middle")
