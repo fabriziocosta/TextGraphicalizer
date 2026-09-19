@@ -667,6 +667,17 @@ def test_display_labels_include_associated_words():
     ) == "causes\ncaused"
 
 
+def test_display_hides_is_a_relation_label():
+    assert TextGraphicalizer._edge_display_label(
+        {"relation_id": "is_a", "label": "is a", "word": "is"},
+        True,
+    ) == ""
+    assert TextGraphicalizer._edge_display_label(
+        {"label": "is a"},
+        False,
+    ) == ""
+
+
 def test_display_node_labels_use_distinct_normal_fonts(monkeypatch):
     pytest.importorskip("matplotlib")
     import matplotlib

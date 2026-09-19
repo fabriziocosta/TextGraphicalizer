@@ -693,6 +693,10 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
 
     @staticmethod
     def _edge_display_label(data: Mapping[str, Any], show_probabilities: bool) -> str:
+        relation_id = data.get("relation_id")
+        label = str(data.get("label", "")).casefold().replace(" ", "_")
+        if relation_id == "is_a" or (relation_id is None and label == "is_a"):
+            return ""
         parts = []
         if data.get("label") is not None:
             parts.append(str(data["label"]))
@@ -796,6 +800,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                     probability=relation_probability,
                     confidence=_confidence(answer),
                     relation_probability=relation_probability,
+                    relation_id=relation_id,
                 )
             )
 
@@ -1153,14 +1158,16 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             )
 
         if show_edge_labels and display_edges:
-            undirected_labels = {
-                (source, target): self._edge_display_label(data, show_probabilities)
-                for source, target, data in undirected_edges
-            }
-            directed_labels = {
-                (source, target): self._edge_display_label(data, show_probabilities)
-                for source, target, data in directed_edges
-            }
+            undirected_labels = {}
+            for source, target, data in undirected_edges:
+                label = self._edge_display_label(data, show_probabilities)
+                if label:
+                    undirected_labels[(source, target)] = label
+            directed_labels = {}
+            for source, target, data in directed_edges:
+                label = self._edge_display_label(data, show_probabilities)
+                if label:
+                    directed_labels[(source, target)] = label
             if undirected_labels:
                 label_graph = nx.Graph()
                 label_graph.add_edges_from(undirected_labels)

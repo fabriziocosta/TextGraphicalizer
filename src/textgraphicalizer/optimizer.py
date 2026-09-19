@@ -30,6 +30,7 @@ class EdgeEvidence:
     probability: float
     confidence: float | None = None
     relation_probability: float | None = None
+    relation_id: str | None = None
 
 
 def select_graph_by_threshold(
@@ -68,6 +69,7 @@ def select_graph_by_threshold(
             edge.source,
             edge.target,
             label=edge.label,
+            **({"relation_id": edge.relation_id} if edge.relation_id is not None else {}),
             probability=edge.probability,
             existence_probability=edge.probability,
             **(
@@ -242,6 +244,7 @@ def select_graph(
             edge.source,
             edge.target,
             label=edge.label,
+            **({"relation_id": edge.relation_id} if edge.relation_id is not None else {}),
             probability=edge.probability,
             existence_probability=edge.probability,
             **(
