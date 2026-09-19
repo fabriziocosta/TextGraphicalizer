@@ -1,4 +1,4 @@
-"""OpenAI-backed graph evidence assignment."""
+"""OpenAI-backed graph paraphrase assignment."""
 
 from __future__ import annotations
 

@@ -747,7 +747,7 @@ def test_display_node_labels_use_distinct_normal_fonts(monkeypatch):
 
     estimator = fitted(monkeypatch)
     graph = nx.DiGraph()
-    graph.add_node("animal", label="Animal", span="Fox")
+    graph.add_node("animal", label="Animal", paraphrase="a hungry fox")
     figure, axes = estimator.display(
         graph,
         layout="circular",
@@ -762,6 +762,6 @@ def test_display_node_labels_use_distinct_normal_fonts(monkeypatch):
     }
     assert annotations["animal"].get_fontfamily() == ["monospace"]
     assert annotations["animal"].get_fontweight() == "normal"
-    assert annotations["Fox"].get_fontfamily() == ["serif"]
-    assert annotations["Fox"].get_fontweight() == "normal"
+    assert annotations["a hungry fox"].get_fontfamily() == ["serif"]
+    assert annotations["a hungry fox"].get_fontweight() == "normal"
     plt.close(figure)
