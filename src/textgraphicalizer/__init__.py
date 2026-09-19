@@ -1,5 +1,11 @@
 """Laya-backed ontology-constrained text graph extraction."""
 
+from .aesop import (
+    AESOP_SOURCE_URL,
+    DEFAULT_AESOP_CACHE_PATH,
+    load_aesop_fables,
+    parse_aesop_fables,
+)
 from .errors import (
     GraphOptimizationError,
     LayaBackendError,
@@ -15,7 +21,9 @@ from .stopwords import load_stopwords
 from .transformer import TextGraphicalizer
 
 __all__ = [
+    "AESOP_SOURCE_URL",
     "Concept",
+    "DEFAULT_AESOP_CACHE_PATH",
     "GraphOptimizationError",
     "LayaBackendError",
     "LayaInferenceError",
@@ -30,8 +38,10 @@ __all__ = [
     "SpanGroundingBackend",
     "SpanScore",
     "TextGraphicalizer",
+    "load_aesop_fables",
     "load_ontology",
     "load_stopwords",
+    "parse_aesop_fables",
 ]
 
 __version__ = "0.1.0"

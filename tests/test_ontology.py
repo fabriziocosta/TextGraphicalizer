@@ -54,26 +54,37 @@ def test_rejects_unknown_domain_concept():
         load_ontology(data)
 
 
-def test_reference_ontology_has_fine_grained_entities():
+def test_reference_ontology_stays_general():
     ontology = load_ontology("ontology.yaml")
     concept_ids = {concept.id for concept in ontology.concepts}
 
-    assert len(ontology.concepts) == 48
+    assert len(ontology.concepts) == 23
     assert {
-        "bridge",
-        "city",
-        "construction",
-        "drought",
-        "evacuation",
-        "flood",
-        "laboratory",
-        "river",
-        "sensor",
-        "shelter",
-        "storm",
-        "village",
-    } <= concept_ids
-    assert ontology.concept_by_id["river"].grounding_terms == ("river",)
+        "entity",
+        "physical_entity",
+        "abstraction",
+        "person",
+        "group",
+        "organization",
+        "location",
+        "artifact",
+        "natural_object",
+        "animal",
+        "plant",
+        "substance",
+        "food",
+        "event",
+        "act",
+        "process",
+        "state",
+        "attribute",
+        "communication",
+        "cognition",
+        "time_period",
+        "quantity",
+        "relation",
+    } == concept_ids
+    assert {"bridge", "city", "drought", "flood", "river", "storm"}.isdisjoint(concept_ids)
     assert "causes" in {
-        relation.id for relation in ontology.valid_relations("storm", "flood")
+        relation.id for relation in ontology.valid_relations("event", "state")
     }

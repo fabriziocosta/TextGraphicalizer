@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import textwrap
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -42,7 +43,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
 
     def __init__(
         self,
-        ontology: str | Path | Mapping[str, Any] | Ontology,
+        ontology: str | Path | Mapping[str, Any] | Ontology | None = None,
         model_id: str = "convaiinnovations/laya",
         model_path: str | Path | None = None,
         model_revision: str | None = None,
@@ -69,6 +70,28 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         self.grounding_model_id = grounding_model_id
         self.load_model()
 
+    def _load_configuration(self) -> None:
+        """Load the ontology and stopwords configured on the estimator."""
+        if self.ontology is None:
+            raise ValueError(
+                "ontology must be set before fitting or transforming; "
+                "assign estimator.ontology or pass it to the constructor"
+            )
+        self.ontology_ = load_ontology(self.ontology)
+        self.stopwords_ = load_stopwords(self.stopwords_path)
+        self._loaded_ontology_source = self.ontology
+        self._loaded_stopwords_source = self.stopwords_path
+        self.n_features_in_ = 1
+
+    def _ensure_configuration(self) -> None:
+        """Load configuration lazily so it can be assigned after init."""
+        if (
+            not hasattr(self, "ontology_")
+            or getattr(self, "_loaded_ontology_source", None) is not self.ontology
+            or getattr(self, "_loaded_stopwords_source", None) is not self.stopwords_path
+        ):
+            self._load_configuration()
+
     def _validate_parameters(self) -> None:
         if not isinstance(self.grounding_model_id, str) or not self.grounding_model_id:
             raise TypeError("grounding_model_id must be a non-empty string")
@@ -93,27 +116,21 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
     def fit(self, X: Any = None, y: Any = None) -> "TextGraphicalizer":
         del X, y
         self._validate_parameters()
-        if not hasattr(self, "ontology_"):
-            self.ontology_ = load_ontology(self.ontology)
-        if not hasattr(self, "stopwords_"):
-            self.stopwords_ = load_stopwords(self.stopwords_path)
-        self.n_features_in_ = 1
+        self._load_configuration()
         return self
 
     def load_model(self) -> "TextGraphicalizer":
         """Load Laya and return this estimator.
 
-        Loading is explicit because it may download a large checkpoint and
-        initialize a device-specific runtime. This method can be called before
-        or after ``fit()``. Repeated calls are idempotent for this estimator
-        instance.
+        Loading happens automatically during construction and may download a
+        large checkpoint and initialize a device-specific runtime. This method
+        can also be called explicitly and is idempotent for this estimator
+        instance. Ontology and stopwords configuration is loaded when present,
+        but may be assigned after construction.
         """
         self._validate_parameters()
-        if not hasattr(self, "ontology_"):
-            self.ontology_ = load_ontology(self.ontology)
-            self.n_features_in_ = 1
-        if not hasattr(self, "stopwords_"):
-            self.stopwords_ = load_stopwords(self.stopwords_path)
+        if self.ontology is not None:
+            self._ensure_configuration()
         if getattr(self, "_model_loaded_", False):
             return self
         self.backend_: LayaBackend = LayaBackend(
@@ -436,6 +453,19 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         return "\n".join(parts)
 
     @staticmethod
+    def _wrap_display_text(paragraph: str, max_char: int) -> str:
+        """Wrap annotation text at a predictable character width."""
+        return "\n".join(
+            textwrap.fill(
+                line,
+                width=max_char,
+                break_long_words=False,
+                break_on_hyphens=False,
+            )
+            for line in paragraph.splitlines()
+        )
+
+    @staticmethod
     def _edge_display_label(data: Mapping[str, Any], show_probabilities: bool) -> str:
         parts = []
         if data.get("label") is not None:
@@ -665,7 +695,8 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         A single string returns one ``DiGraph``. A sequence of strings returns
         a list of graphs in the same order as the input.
         """
-        check_is_fitted(self, ["ontology_"])
+        self._ensure_configuration()
+        check_is_fitted(self, ["ontology_", "stopwords_"])
         if not getattr(self, "_model_loaded_", False):
             raise RuntimeError(
                 "The Laya model is not loaded. Call load_model() before transform()."
@@ -710,6 +741,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         show_edge_labels: bool = True,
         show_probabilities: bool = False,
         show_paragraph: bool = True,
+        max_char: int = 100,
         show_legend: bool = False,
         show: bool = True,
     ) -> tuple[Any, Any]:
@@ -742,6 +774,8 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             raise TypeError("scale_edge_width_by_probability must be a bool")
         if not isinstance(color_by_probability, bool):
             raise TypeError("color_by_probability must be a bool")
+        if not isinstance(max_char, int) or isinstance(max_char, bool) or max_char < 1:
+            raise ValueError("max_char must be a positive integer")
 
         try:
             import matplotlib.pyplot as plt
@@ -915,16 +949,17 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             pad=16,
         )
         if show_paragraph and paragraph:
+            display_paragraph = self._wrap_display_text(paragraph, max_char)
             axes.text(
                 0.5,
                 -0.08,
-                paragraph,
+                display_paragraph,
                 transform=axes.transAxes,
                 ha="center",
                 va="top",
                 fontsize=9,
                 color="#4b5563",
-                wrap=True,
+                wrap=False,
             )
         if show_legend:
             axes.text(

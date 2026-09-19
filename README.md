@@ -19,13 +19,14 @@ python -m pip install -e ".[notebook]"
 python -m ipykernel install --user --name py312 --display-name "py312"
 ```
 
-Constructing `TextGraphicalizer` initializes Laya and the span-grounding
-cross-encoder;
+Constructing `TextGraphicalizer()` automatically initializes Laya and the
+span-grounding cross-encoder;
 this may download both checkpoints into the standard Hugging Face cache.
-`.load_model()` remains available and idempotent. The model weights are not
-stored in this repository. To run offline, pass a previously downloaded Laya
-snapshot with `model_path` and ensure the configured span-grounding checkpoint
-is cached.
+The ontology and `stopwords_path` are optional at construction and can be set
+before the first transformation. `.load_model()` remains available and
+idempotent. The model weights are not stored in this repository. To run
+offline, pass a previously downloaded Laya snapshot with `model_path` and
+ensure the configured span-grounding checkpoint is cached.
 
 By default, graph selection uses the MILP optimizer. Set `use_milp=False` to
 select nodes with `node_threshold` and edges with `edge_threshold` directly;
@@ -54,40 +55,49 @@ handwritten grounding vocabulary is required. Optional single-word
 `grounding_terms` act as lexical anchors when a generic longer span receives a
 higher raw STS score.
 
-## Expanded WordNet ontology
+## General WordNet ontology
 
-The repository includes [`ontology.yaml`](ontology.yaml), a 48-concept
-starter ontology aligned with Princeton WordNet. It keeps broad concepts such
-as `entity`, `physical_entity`, `person`, and `event`, while adding narrower
-entities for places (`village`, `city`, `laboratory`), infrastructure
-(`bridge`, `road`, `shelter`, `vehicle`, `sensor`), nature (`river`, `soil`,
-`water`, `crop`), events (`storm`, `flood`, `drought`, `wildfire`), and
-processes (`inspection`, `evacuation`, `monitoring`, `construction`).
+The repository includes [`ontology.yaml`](ontology.yaml), a 23-concept
+starter ontology aligned with Princeton WordNet. It deliberately stays at
+general categories such as `entity`, `person`, `location`, `artifact`,
+`event`, `process`, and `state`; example-domain entities are left to a
+separate application ontology.
 
-The narrower concepts make the output more precise: a paragraph can now
-produce `River` alongside the general `Natural object`, or `Flood` alongside
-the general `Event`, when the model finds evidence for both levels. Their
-`grounding_terms` also give span selection a lexical anchor for the concrete
-entity.
-
-This remains an extensible starter ontology: WordNet represents distinct
-senses as synsets, so domain-specific work can add narrower synsets rather
-than treating a word string as one universal concept. See the [Princeton
+This keeps the reference vocabulary reusable and limits the number of model
+questions. WordNet represents distinct senses as synsets, so domain-specific
+work can add narrower synsets when that precision is actually required rather
+than baking example entities into the default ontology. See the [Princeton
 WordNet overview](https://wordnet.princeton.edu/) and its documentation of
 semantic relations.
+
+## Aesop corpus
+
+`load_aesop_fables()` downloads the UTF-8 text of [Project Gutenberg eBook
+#11339](https://www.gutenberg.org/ebooks/11339), removes its book front matter,
+illustration list, and license text, and returns one cleaned string per fable.
+The parsed stories are cached as JSON under
+`~/.cache/textgraphicalizer/aesop-fables-11339.json` by default; pass
+`cache_path=...` to choose another location or `refresh=True` to rebuild it.
+
+```python
+from textgraphicalizer import TextGraphicalizer, load_aesop_fables
+
+stories = load_aesop_fables()
+extractor = TextGraphicalizer()
+extractor.ontology = "ontology.yaml"
+graph = extractor.transform(stories[0])
+extractor.display(graph, paragraph=stories[0], max_char=100)
+```
 
 ## Usage
 
 ```python
 from textgraphicalizer import TextGraphicalizer
 
-extractor = TextGraphicalizer(
-    ontology="ontology.yaml",
-    stopwords_path="stopwords.yaml",
-    grounding_model_id="cross-encoder/stsb-distilroberta-base",
-    connected=False,
-)
-graph = extractor.fit_transform("An infection caused the patient to develop a fever.")
+extractor = TextGraphicalizer()
+extractor.ontology = "ontology.yaml"
+extractor.stopwords_path = "stopwords.yaml"
+graph = extractor.transform("An infection caused the patient to develop a fever.")
 
 print(graph.nodes(data=True))
 print(graph.edges(data=True))
@@ -147,6 +157,7 @@ figure, axes = extractor.display(
     scale_node_size_by_probability=True,
     scale_edge_width_by_probability=True,
     show_probabilities=True,
+    max_char=100,
     show=False,                  # useful when composing several plots
 )
 ```

@@ -101,6 +101,34 @@ def test_init_loads_model_automatically(monkeypatch):
     assert estimator.transform("A causes B.").number_of_nodes() == 2
 
 
+def test_init_without_configuration_loads_model_and_accepts_late_configuration(
+    monkeypatch, tmp_path
+):
+    calls = []
+
+    def load(self):
+        calls.append(self)
+        return FakeBackend()
+
+    monkeypatch.setattr("textgraphicalizer.transformer.LayaBackend.load", load)
+    monkeypatch.setattr(
+        "textgraphicalizer.transformer.NliGroundingBackend.load",
+        lambda self: FakeNliBackend(self.model_id, self.device),
+    )
+    stopwords_path = tmp_path / "stopwords.yaml"
+    stopwords_path.write_text("stopwords: [the, caused]\n", encoding="utf-8")
+
+    estimator = TextGraphicalizer()
+    estimator.ontology = ONTOLOGY
+    estimator.stopwords_path = stopwords_path
+
+    graph = estimator.transform("The infection caused a fever.")
+
+    assert len(calls) == 1
+    assert set(graph.nodes) == {"a", "b"}
+    assert graph.graph["stopwords_path"] == str(stopwords_path)
+
+
 def test_load_model_remains_idempotent_after_automatic_loading(monkeypatch):
     calls = []
 
@@ -435,6 +463,30 @@ def test_display_is_parameterized_and_returns_matplotlib_objects(monkeypatch):
     )
     assert figure is axes.figure
     assert axes.get_title().startswith("Custom graph")
+    plt.close(figure)
+
+
+def test_display_wraps_long_paragraph_text(monkeypatch):
+    pytest.importorskip("matplotlib")
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    estimator = fitted(monkeypatch)
+    graph = estimator.transform("A causes B.")
+    paragraph = "A very long paragraph that should be wrapped across multiple lines."
+    figure, axes = estimator.display(
+        graph,
+        paragraph=paragraph,
+        max_char=20,
+        show=False,
+    )
+
+    displayed = [text.get_text() for text in axes.texts if text.get_text().startswith("A very")]
+    assert len(displayed) == 1
+    assert "\n" in displayed[0]
+    assert all(len(line) <= 20 for line in displayed[0].splitlines())
     plt.close(figure)
 
 
