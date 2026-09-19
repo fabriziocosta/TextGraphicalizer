@@ -195,6 +195,20 @@ figure, axes = extractor.display(
 
 Pass `text="..."` instead of `graph` to transform and render in one call.
 
+For an interactive notebook view, `display_d3()` returns a force-directed D3
+HTML display with zooming and draggable nodes. It loads D3.js from its CDN:
+
+```python
+from IPython.display import display
+
+display(extractor.display_d3(
+    graph,
+    title=title,
+    document=document,
+    max_char=100,
+))
+```
+
 ## Model smoke test
 
 The optional integration test downloads and loads the model:

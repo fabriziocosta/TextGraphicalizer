@@ -606,6 +606,27 @@ def test_display_wraps_long_document_text(monkeypatch):
     plt.close(figure)
 
 
+def test_display_d3_returns_force_directed_html(monkeypatch):
+    pytest.importorskip("IPython")
+
+    estimator = fitted(monkeypatch)
+    graph = nx.DiGraph()
+    graph.add_node("a", label="Animal", span="Fox", probability=0.8)
+    graph.add_node("b", label="Entity", probability=0.7)
+    graph.add_edge("a", "b", relation_id="is_a", label="is a", word="is")
+
+    rendered = estimator.display_d3(
+        graph,
+        title="Example",
+        document="A short document.",
+    )
+
+    assert "d3@7" in rendered.data
+    assert "forceSimulation" in rendered.data
+    assert "animal" in rendered.data
+    assert "is a" not in rendered.data
+
+
 def test_display_defaults_to_kamada_kawai(monkeypatch):
     pytest.importorskip("matplotlib")
     import matplotlib
@@ -676,6 +697,32 @@ def test_display_hides_is_a_relation_label():
         {"label": "is a"},
         False,
     ) == ""
+    assert TextGraphicalizer._edge_display_label(
+        {"label": "IS-A"},
+        False,
+    ) == ""
+
+
+def test_display_does_not_render_is_a_edge_text(monkeypatch):
+    pytest.importorskip("matplotlib")
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    estimator = fitted(monkeypatch)
+    graph = nx.DiGraph()
+    graph.add_edge("a", "b", relation_id="is_a", label="is a", word="is")
+    figure, axes = estimator.display(
+        graph,
+        layout="circular",
+        show_node_labels=False,
+        show_paragraph=False,
+        show=False,
+    )
+
+    assert all(text.get_text() not in {"is", "is a", "is_a"} for text in axes.texts)
+    plt.close(figure)
 
 
 def test_display_node_labels_use_distinct_normal_fonts(monkeypatch):

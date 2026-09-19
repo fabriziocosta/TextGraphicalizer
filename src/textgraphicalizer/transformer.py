@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import textwrap
@@ -9,6 +10,7 @@ from collections import Counter
 from collections.abc import Collection, Sequence
 from pathlib import Path
 from typing import Any, Callable, Mapping
+from uuid import uuid4
 
 import networkx as nx
 import numpy as np
@@ -693,9 +695,17 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
 
     @staticmethod
     def _edge_display_label(data: Mapping[str, Any], show_probabilities: bool) -> str:
-        relation_id = data.get("relation_id")
-        label = str(data.get("label", "")).casefold().replace(" ", "_")
-        if relation_id == "is_a" or (relation_id is None and label == "is_a"):
+        relation_values = (
+            data.get("relation_id"),
+            data.get("relation"),
+            data.get("label"),
+        )
+        normalized_relations = {
+            re.sub(r"[^a-z0-9]+", "_", str(value).casefold()).strip("_")
+            for value in relation_values
+            if value is not None
+        }
+        if "is_a" in normalized_relations:
             return ""
         parts = []
         if data.get("label") is not None:
@@ -1229,6 +1239,250 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         if show:
             plt.show()
         return figure, axes
+
+    def display_d3(
+        self,
+        graph: nx.DiGraph | None = None,
+        *,
+        text: str | None = None,
+        document: str | None = None,
+        paragraph: str | None = None,
+        title: str | None = None,
+        width: int = 1000,
+        height: int = 620,
+        show_node_labels: bool = True,
+        show_edge_labels: bool = True,
+        show_probabilities: bool = False,
+        show_document: bool = True,
+        max_char: int = 100,
+    ) -> Any:
+        """Return an interactive D3 force-directed graph for notebook display."""
+        if document is not None and paragraph is not None:
+            raise ValueError("Provide document or paragraph, not both")
+        if graph is None:
+            if text is None:
+                raise ValueError("Provide either graph or text")
+            graph = self.transform(text)
+            document = document or paragraph or text
+        elif text is not None:
+            raise ValueError("Provide graph or text, not both")
+        else:
+            document = document or paragraph
+        if not isinstance(graph, nx.DiGraph):
+            raise TypeError("graph must be a networkx.DiGraph")
+        for name, value in (("width", width), ("height", height), ("max_char", max_char)):
+            if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                raise ValueError(f"{name} must be a positive integer")
+        for name, value in (
+            ("show_node_labels", show_node_labels),
+            ("show_edge_labels", show_edge_labels),
+            ("show_probabilities", show_probabilities),
+            ("show_document", show_document),
+        ):
+            if not isinstance(value, bool):
+                raise TypeError(f"{name} must be a bool")
+
+        try:
+            from IPython.display import HTML
+        except ImportError as exc:
+            raise ImportError(
+                "D3 graph rendering requires IPython. Install with "
+                "`pip install -e \".[notebook]\"`."
+            ) from exc
+
+        graph_id = f"textgraphicalizer-d3-{uuid4().hex}"
+        nodes = [
+            {
+                "id": str(node),
+                "label": str(data.get("label", node)).lower(),
+                "evidence": (
+                    str(data.get("span", data.get("word")))
+                    if data.get("span", data.get("word")) is not None
+                    else ""
+                ),
+                "probability": float(data.get("probability", 0.0)),
+            }
+            for node, data in graph.nodes(data=True)
+        ]
+        links = [
+            {
+                "source": str(source),
+                "target": str(target),
+                "label": (
+                    self._edge_display_label(data, show_probabilities)
+                    if show_edge_labels
+                    else ""
+                ),
+                "probability": float(data.get("probability", 0.0)),
+            }
+            for source, target, data in graph.edges(data=True)
+        ]
+        payload = {
+            "title": title or "TextGraphicalizer graph",
+            "document": (
+                self._wrap_display_text(document, max_char)
+                if show_document and document
+                else ""
+            ),
+            "nodes": nodes,
+            "links": links,
+        }
+        data_json = json.dumps(payload, ensure_ascii=False).replace("<", "\\u003c")
+        html = """
+<div id="__GRAPH_ID__" class="textgraphicalizer-d3"></div>
+<script>
+(function () {
+  const container = document.getElementById("__GRAPH_ID__");
+  const data = __GRAPH_DATA__;
+  const width = __WIDTH__;
+  const height = __HEIGHT__;
+
+  function loadD3() {
+    if (window.d3) return Promise.resolve(window.d3);
+    if (window.__textGraphicalizerD3Promise) {
+      return window.__textGraphicalizerD3Promise;
+    }
+    window.__textGraphicalizerD3Promise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "https://cdn.jsdelivr.net/npm/d3@7";
+      script.onload = () => resolve(window.d3);
+      script.onerror = reject;
+      document.head.appendChild(script);
+    });
+    return window.__textGraphicalizerD3Promise;
+  }
+
+  function render(d3) {
+    const root = d3.select(container);
+    root.html("");
+    root.append("div").attr("class", "textgraphicalizer-d3-title").text(data.title);
+    const svg = root.append("svg")
+      .attr("viewBox", `0 0 ${width} ${height}`)
+      .attr("width", "100%")
+      .attr("height", height)
+      .style("background", "#f7f8fa")
+      .style("border-radius", "6px")
+      .style("cursor", "grab");
+    const defs = svg.append("defs");
+    defs.append("marker")
+      .attr("id", "textgraphicalizer-arrow-__GRAPH_ID__")
+      .attr("viewBox", "0 -5 10 10")
+      .attr("refX", 18)
+      .attr("refY", 0)
+      .attr("markerWidth", 6)
+      .attr("markerHeight", 6)
+      .attr("orient", "auto")
+      .append("path")
+      .attr("d", "M0,-5L10,0L0,5")
+      .attr("fill", "#64748b");
+
+    const layer = svg.append("g");
+    svg.call(d3.zoom().scaleExtent([0.25, 4]).on("zoom", (event) => {
+      layer.attr("transform", event.transform);
+    }));
+    const color = d3.scaleSequential(d3.interpolateViridis).domain([0, 1]);
+    const simulation = d3.forceSimulation(data.nodes)
+      .force("link", d3.forceLink(data.links).id((d) => d.id).distance(150))
+      .force("charge", d3.forceManyBody().strength(-480))
+      .force("center", d3.forceCenter(width / 2, height / 2))
+      .force("collision", d3.forceCollide().radius(42));
+    const links = layer.append("g")
+      .attr("stroke", "#64748b")
+      .attr("stroke-opacity", 0.7)
+      .selectAll("line")
+      .data(data.links)
+      .join("line")
+      .attr("stroke-width", (d) => 1 + 3 * d.probability)
+      .attr("marker-end", "url(#textgraphicalizer-arrow-__GRAPH_ID__)");
+    const linkLabels = layer.append("g")
+      .attr("font-family", "serif")
+      .attr("font-size", 11)
+      .selectAll("text")
+      .data(data.links.filter((d) => d.label))
+      .join("text")
+      .attr("text-anchor", "middle")
+      .attr("fill", "#334155")
+      .text((d) => d.label);
+    const nodes = layer.append("g")
+      .selectAll("g")
+      .data(data.nodes)
+      .join("g")
+      .call(d3.drag()
+        .on("start", dragstarted)
+        .on("drag", dragged)
+        .on("end", dragended));
+    nodes.append("circle")
+      .attr("r", (d) => 12 + 10 * d.probability)
+      .attr("fill", (d) => color(d.probability))
+      .attr("stroke", "white")
+      .attr("stroke-width", 2);
+    if (__SHOW_NODE_LABELS__) {
+      nodes.append("text")
+        .attr("text-anchor", "middle")
+        .attr("font-family", "monospace")
+        .attr("font-size", 11)
+        .attr("fill", "#111827")
+        .each(function (d) {
+          const text = d3.select(this);
+          text.append("tspan").attr("x", 0).attr("dy", "-1.1em").text(d.label);
+          if (d.evidence) {
+            text.append("tspan").attr("x", 0).attr("dy", "1.2em")
+              .attr("font-family", "serif").text(d.evidence);
+          }
+        });
+    }
+    if (data.document) {
+      root.append("pre").attr("class", "textgraphicalizer-d3-document").text(data.document);
+    }
+    simulation.on("tick", () => {
+      links
+        .attr("x1", (d) => d.source.x)
+        .attr("y1", (d) => d.source.y)
+        .attr("x2", (d) => d.target.x)
+        .attr("y2", (d) => d.target.y);
+      linkLabels
+        .attr("x", (d) => (d.source.x + d.target.x) / 2)
+        .attr("y", (d) => (d.source.y + d.target.y) / 2);
+      nodes.attr("transform", (d) => `translate(${d.x},${d.y})`);
+    });
+    function dragstarted(event, d) {
+      if (!event.active) simulation.alphaTarget(0.3).restart();
+      d.fx = d.x;
+      d.fy = d.y;
+    }
+    function dragged(event, d) {
+      d.fx = event.x;
+      d.fy = event.y;
+    }
+    function dragended(event, d) {
+      if (!event.active) simulation.alphaTarget(0);
+      d.fx = null;
+      d.fy = null;
+    }
+  }
+
+  loadD3().then(render).catch(() => {
+    container.textContent = "Could not load D3.js for the interactive graph.";
+  });
+})();
+</script>
+<style>
+.textgraphicalizer-d3 { max-width: 1000px; margin: 0.5rem auto 1rem; }
+.textgraphicalizer-d3-title { font: 16px sans-serif; margin: 0.4rem 0; color: #111827; }
+.textgraphicalizer-d3-document {
+  white-space: pre-wrap; font: 14px serif; color: #4b5563;
+  margin: 0.7rem 0 0; text-align: center;
+}
+</style>
+"""
+        html = (
+            html.replace("__GRAPH_ID__", graph_id)
+            .replace("__GRAPH_DATA__", data_json)
+            .replace("__WIDTH__", str(width))
+            .replace("__HEIGHT__", str(height))
+            .replace("__SHOW_NODE_LABELS__", "true" if show_node_labels else "false")
+        )
+        return HTML(html)
 
     def fit_transform(
         self, X: Any = None, y: Any = None, **fit_params: Any
