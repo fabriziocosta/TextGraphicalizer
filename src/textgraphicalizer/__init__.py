@@ -14,6 +14,7 @@ from .errors import (
     LayaResponseError,
     OntologyError,
 )
+from .llm_backend import OpenAIGroundingBackend
 from .nli_backend import NliGroundingBackend
 from .ontology import Concept, Ontology, Relation, load_ontology
 from .span_backend import ConceptDescription, Span, SpanGroundingBackend, SpanScore
@@ -33,6 +34,7 @@ __all__ = [
     "OntologyError",
     "Relation",
     "NliGroundingBackend",
+    "OpenAIGroundingBackend",
     "ConceptDescription",
     "Span",
     "SpanGroundingBackend",

@@ -7,7 +7,7 @@ do want to understand what the numbers mean and how they become a graph.
 ## The short version
 
 Laya is a **decision model**, not a text-generation model. We give it a piece
-of state—here, one paragraph—and a set of typed questions. It returns
+of state—here, one document—and a set of typed questions. It returns
 structured answers such as probabilities, class labels, scores, and confidence
 values.
 
@@ -22,7 +22,7 @@ After graph selection, the grounding pass uses a Sentence Transformers
 cross-encoder to choose a textual span for each retained node and edge. It
 constructs a concept query from the ontology label and description, generates
 every contiguous one-, two-, and three-word span, marks each span in the
-original paragraph, and scores the concept/context pair. The highest-scoring
+original document, and scores the concept/context pair. The highest-scoring
 span is attached to the graph item. This is a ranking score, not a calibrated
 probability, and it does not use another optimization problem.
 
@@ -63,7 +63,7 @@ Concept: State
 Description: The way something is with respect to its main attributes.
 ```
 
-The second input keeps the complete paragraph and marks one candidate span:
+The second input keeps the complete document and marks one candidate span:
 
 ```text
 Sentence: The severe <<drought>> caused widespread crop failure.
@@ -80,7 +80,7 @@ An ontology can optionally provide single-word `grounding_terms` for a concept
 or relation. These are lexical anchors, not replacements for model scoring:
 when a candidate exactly matches an anchor (including a simple inflection), it
 is preferred over a generic longer phrase that the STS model may otherwise
-rank highly because it contains more of the unchanged paragraph.
+rank highly because it contains more of the unchanged document.
 
 Selected graph nodes and edges expose:
 
@@ -116,7 +116,7 @@ predict a start token and end token directly.
 For one graph item, the process is:
 
 1. Build the concept query from the ontology label and description.
-2. Tokenize the paragraph into ordered word positions.
+2. Tokenize the document into ordered word positions.
 3. Generate every contiguous span of length one, two, or three words.
 4. Mark one candidate at a time with `<<...>>` and pair that context with the
    concept query.
@@ -128,7 +128,7 @@ For one graph item, the process is:
 Conceptually, for concept $c$ and candidate span $x_i$ the model computes:
 
 $$
-s(c, x_i) = f(\text{concept query},\ \text{marked paragraph with }x_i)
+s(c, x_i) = f(\text{concept query},\ \text{marked document with }x_i)
 $$
 
 and the raw model choice is:
@@ -139,17 +139,26 @@ $$
 
 The lexical-anchor step exists because an STS model is trained to compare the
 meaning of two texts, not to identify a gold answer span. Since every marked
-candidate contains the same paragraph, a generic long phrase can otherwise
+candidate contains the same document, a generic long phrase can otherwise
 receive the highest score for several unrelated concepts. An ontology term
 such as `river`, `storm`, or `flooded` provides a precise one-word anchor when
 the ontology author has supplied one; the model scores and full diagnostics
 are still retained for inspection.
 
+Because the marked full-document context can make generic phrases look
+artificially strong, the final ranking applies a small length and stopword
+penalty. This keeps concise concept evidence ahead of repeated fragments such
+as `Fox saw some` while preserving a clearly stronger multi-word phrase.
+
+Node spans are then resolved jointly with a linear assignment over distinct
+surface mentions. Each node has an unassigned fallback, so the global step
+prevents duplicate evidence without forcing a weak alternative onto a node.
+
 Relation spans use the same rule, with the relation label itself also acting
 as a phrase anchor when no explicit `grounding_terms` are configured. If the
-paragraph contains no matching relation expression, no span is attached to
+document contains no matching relation expression, no span is attached to
 the edge; the ontology relation label remains visible. This prevents an
-unrelated high-scoring paragraph phrase from being presented as evidence for
+unrelated high-scoring document phrase from being presented as evidence for
 every edge.
 
 ## Laya's basic vocabulary
@@ -158,7 +167,7 @@ every edge.
 
 The **state** is the information Laya reads. It can be text, a dictionary, an
 email, a ticket, or another JSON-like document. In this project the state is
-the paragraph passed to `transform()`:
+the document passed to `transform()`:
 
 ```python
 graph = extractor.transform(
@@ -166,7 +175,7 @@ graph = extractor.transform(
 )
 ```
 
-We can call the paragraph $T$. Laya evaluates questions using $T$; it does
+We can call the document $T$. Laya evaluates questions using $T$; it does
 not need a separate prompt for each question.
 
 ### Question
@@ -181,7 +190,7 @@ For example, the node question generated for an ontology concept is roughly:
 {
     "type": "noul",
     "instructions": (
-        'Is the concept "Fever" expressed in this paragraph? '
+        'Is the concept "Fever" expressed in this document? '
         "Concept description: An elevated body temperature."
     ),
 }
@@ -201,7 +210,7 @@ answers = result["answers"]
 
 The returned mapping has one answer per question. This is useful here because
 an ontology may contain many concepts and many possible pairs of concepts. The
-questions are different, but the paragraph is the same.
+questions are different, but the document is the same.
 
 The phrase **non-autoregressive** means that Laya makes these structured
 decisions directly. It is not writing an answer token by token and then asking
@@ -216,7 +225,7 @@ Laya exposes three main question types: `noul`, `choice`, and `score`.
 Use `noul` when the decision is naturally a proposition that can be true or
 false. In this project, each ontology concept is tested this way:
 
-> Is concept $i$ expressed in paragraph $T$?
+> Is concept $i$ expressed in document $T$?
 
 Laya returns a value called `noul`, which TextGraphicalizer interprets as
 
@@ -453,7 +462,7 @@ are applied in this mode.
 
 ## Worked example
 
-Suppose the paragraph is:
+Suppose the document is:
 
 > An infection caused the patient to develop a fever.
 

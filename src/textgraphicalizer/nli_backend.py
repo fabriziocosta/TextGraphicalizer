@@ -156,10 +156,10 @@ class NliGroundingBackend:
     ) -> dict[int, list[tuple[str, int]]]:
         """Return local context text and the candidate's context position.
 
-        A full paragraph is useful for deciding whether a concept is present,
+        A full document is useful for deciding whether a concept is present,
         but it is too broad for attributing that concept to one word.  Using a
         small token window keeps the contrastive comparison focused on the
-        candidate's local evidence instead of paragraph-wide salience.
+        candidate's local evidence instead of document-wide salience.
         """
         matches = list(self._WORD_RE.finditer(text))
         result: dict[int, list[tuple[str, int]]] = {}

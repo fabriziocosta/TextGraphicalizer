@@ -22,10 +22,10 @@ class ConceptDescription:
 
 @dataclass(frozen=True)
 class Span:
-    """A contiguous word span in a paragraph.
+    """A contiguous word span in a document.
 
     ``start_word`` is inclusive and ``end_word`` is exclusive, using the
-    paragraph's word-token positions.
+    document's word-token positions.
     """
 
     text: str

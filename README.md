@@ -1,6 +1,6 @@
 # TextGraphicalizer
 
-TextGraphicalizer converts one paragraph into an ontology-constrained
+TextGraphicalizer converts one document into an ontology-constrained
 `networkx.DiGraph` using the [Laya](https://github.com/NandhaKishorM/laya)
 decision model and a SciPy mixed-integer optimizer.
 
@@ -19,14 +19,20 @@ python -m pip install -e ".[notebook]"
 python -m ipykernel install --user --name py312 --display-name "py312"
 ```
 
-Constructing `TextGraphicalizer()` automatically initializes Laya and the
-span-grounding cross-encoder;
+Constructing `TextGraphicalizer()` automatically initializes Laya and, by
+default, the span-grounding cross-encoder;
 this may download both checkpoints into the standard Hugging Face cache.
 The ontology and `stopwords_path` are optional at construction and can be set
 before the first transformation. `.load_model()` remains available and
 idempotent. The model weights are not stored in this repository. To run
 offline, pass a previously downloaded Laya snapshot with `model_path` and
 ensure the configured span-grounding checkpoint is cached.
+
+Set `use_llm=True` to replace cross-encoder grounding with one structured
+OpenAI Responses API call over the selected graph. The default model is
+`gpt-4.1-mini`; set `llm_model` to another OpenAI model ID if needed. The
+backend reads `OPENAI_API_KEY` from the environment and requires the evidence
+it returns to be an exact substring of the document.
 
 By default, graph selection uses the MILP optimizer. Set `use_milp=False` to
 select nodes with `node_threshold` and edges with `edge_threshold` directly;
@@ -86,7 +92,7 @@ stories = load_aesop_fables()
 extractor = TextGraphicalizer()
 extractor.ontology = "ontology.yaml"
 graph = extractor.transform(stories[0])
-extractor.display(graph, paragraph=stories[0], max_char=100)
+extractor.display(graph, document=stories[0], max_char=100)
 ```
 
 ## Usage
@@ -101,6 +107,17 @@ graph = extractor.transform("An infection caused the patient to develop a fever.
 
 print(graph.nodes(data=True))
 print(graph.edges(data=True))
+```
+
+For LLM-based grounding:
+
+```python
+extractor = TextGraphicalizer(
+    ontology="ontology.yaml",
+    use_llm=True,
+    llm_model="gpt-4.1-mini",
+)
+graph = extractor.transform("An infection caused the patient to develop a fever.")
 ```
 
 The estimator returns a directed graph for one string, or a list of graphs
@@ -119,7 +136,7 @@ pass `node_threshold`.
 Graph metadata includes `input_truncated`. This flag is computed against the
 full Laya sequence for every node and relation question, including question
 instructions, relation options, special tokens, and the configured 512-token
-budget—not against the paragraph token count alone.
+budget—not against the document token count alone.
 
 For each selected node and edge, TextGraphicalizer generates every contiguous
 one-, two-, and three-word span without removing stopwords. It sends the
@@ -131,8 +148,14 @@ backward-compatible `word`, `word_index`, and `word_score` fields. The STS
 score is a ranking compatibility score, not a calibrated probability; set
 `grounding_model_id=...` to try another cross-encoder checkpoint. Relation
 spans are attached only when a relation term or relation-label phrase occurs
-in the paragraph; otherwise the edge retains its ontology label without a
+in the document; otherwise the edge retains its ontology label without a
 misleading span.
+
+Span selection also favors concise evidence and discounts stopword-heavy
+context fragments, so a repeated phrase such as `Fox saw some` does not become
+the grounding span for every concept in a story.
+Node spans are then resolved with a linear assignment over distinct surface
+mentions; weak competing assignments are left ungrounded rather than forced.
 
 ## Rendering graphs
 
@@ -143,6 +166,8 @@ duplicating visualization code:
 When reciprocal edges have the same relation label, the renderer displays
 them as one undirected edge. Node and edge annotations include both the
 ontology/relation label and the associated sentence span.
+Node labels are rendered lowercase in normal-weight monospace; grounded spans
+use normal-weight serif text.
 
 The default layout is `kamada_kawai`.
 

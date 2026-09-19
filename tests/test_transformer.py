@@ -147,6 +147,83 @@ def test_load_model_remains_idempotent_after_automatic_loading(monkeypatch):
     assert len(calls) == 1
 
 
+def test_use_llm_selects_openai_grounding_backend(monkeypatch):
+    monkeypatch.setattr(
+        "textgraphicalizer.transformer.LayaBackend.load",
+        lambda self: FakeBackend(),
+    )
+
+    class FakeLlmBackend:
+        model_id = "gpt-4.1-mini"
+
+        def ground_graph(self, text, graph, concepts, edges):
+            assert text == "A causes B."
+            assert set(concepts) == {"a", "b"}
+            assert set(edges) == {("a", "b")}
+            return (
+                {
+                    "a": {"span": "A", "span_start": 0, "span_end": 1},
+                    "b": {"span": "B", "span_start": 2, "span_end": 3},
+                },
+                {},
+            )
+
+    monkeypatch.setattr(
+        "textgraphicalizer.transformer.OpenAIGroundingBackend.load",
+        lambda self: FakeLlmBackend(),
+    )
+    monkeypatch.setattr(
+        "textgraphicalizer.transformer.SpanGroundingBackend.load",
+        lambda self: pytest.fail("cross-encoder should not load in LLM mode"),
+    )
+
+    estimator = TextGraphicalizer(ONTOLOGY, use_llm=True)
+    graph = estimator.transform("A causes B.")
+
+    assert graph.nodes["a"]["span"] == "A"
+    assert graph.nodes["b"]["span"] == "B"
+    assert graph.graph["grounding_method"] == "openai_llm_graph_assignment"
+    assert graph.graph["grounding_model_id"] == "gpt-4.1-mini"
+
+
+def test_transform_refreshes_grounding_backend_when_use_llm_changes(monkeypatch):
+    monkeypatch.setattr(
+        "textgraphicalizer.transformer.LayaBackend.load",
+        lambda self: FakeBackend(),
+    )
+    monkeypatch.setattr(
+        "textgraphicalizer.transformer.SpanGroundingBackend.load",
+        lambda self: FakeNliBackend(self.model_id, self.device),
+    )
+    llm_calls = []
+
+    class FakeLlmBackend:
+        model_id = "gpt-4.1-mini"
+
+        def ground_graph(self, text, graph, concepts, edges):
+            del text, graph, concepts, edges
+            return {}, {}
+
+    def load_llm(self):
+        llm_calls.append(self)
+        return FakeLlmBackend()
+
+    monkeypatch.setattr(
+        "textgraphicalizer.transformer.OpenAIGroundingBackend.load",
+        load_llm,
+    )
+
+    estimator = TextGraphicalizer(ONTOLOGY)
+    assert estimator.use_llm is False
+    estimator.use_llm = True
+
+    graph = estimator.transform("A causes B.")
+
+    assert len(llm_calls) == 1
+    assert graph.graph["grounding_method"] == "openai_llm_graph_assignment"
+    assert isinstance(estimator.grounding_backend_, FakeLlmBackend)
+
+
 def test_grounding_model_loads_automatically_and_remains_idempotent(monkeypatch):
     laya_calls = []
     nli_calls = []
@@ -337,6 +414,45 @@ def test_span_grounding_uses_ontology_terms_to_break_generic_score_ties():
     assert result["event"]["span_score"] == pytest.approx(0.21)
 
 
+def test_span_grounding_prefers_concise_evidence_over_generic_context():
+    scores = {
+        "animal": [
+            SpanScore("Fox saw some", 7, 10, 0.39),
+            SpanScore("Fox", 7, 8, 0.326),
+        ],
+        "food": [
+            SpanScore("Fox saw some", 7, 10, 0.408),
+            SpanScore("Grapes", 4, 5, 0.322),
+            SpanScore("Grapes", 74, 75, 0.312),
+            SpanScore("bunches", 11, 12, 0.323),
+        ],
+    }
+
+    result = TextGraphicalizer._best_spans(scores, stopwords={"some"})
+
+    assert result["animal"]["span"] == "Fox"
+    assert result["food"]["span"] == "Grapes"
+
+
+def test_span_grounding_assigns_distinct_node_evidence():
+    scores = {
+        "first": [
+            SpanScore("shared", 0, 1, 0.90),
+            SpanScore("first-specific", 2, 3, 0.895),
+        ],
+        "second": [
+            SpanScore("shared", 0, 1, 0.89),
+            SpanScore("second-specific", 4, 5, 0.20),
+        ],
+    }
+
+    result = TextGraphicalizer._best_spans(scores, unique=True)
+
+    assert result["first"]["span"] == "first-specific"
+    assert result["second"]["span"] == "shared"
+    assert len({data["span"] for data in result.values()}) == len(result)
+
+
 def test_relation_span_requires_a_relation_anchor():
     scores = {
         ("a", "b"): [
@@ -433,7 +549,7 @@ def test_relation_questions_are_domain_filtered(monkeypatch):
 def test_transform_requires_string(monkeypatch):
     estimator = fitted(monkeypatch)
     with pytest.raises(TypeError):
-        estimator.transform(["not a paragraph", 42])
+        estimator.transform(["not a document", 42])
 
 
 def test_display_is_parameterized_and_returns_matplotlib_objects(monkeypatch):
@@ -466,7 +582,7 @@ def test_display_is_parameterized_and_returns_matplotlib_objects(monkeypatch):
     plt.close(figure)
 
 
-def test_display_wraps_long_paragraph_text(monkeypatch):
+def test_display_wraps_long_document_text(monkeypatch):
     pytest.importorskip("matplotlib")
     import matplotlib
 
@@ -475,10 +591,10 @@ def test_display_wraps_long_paragraph_text(monkeypatch):
 
     estimator = fitted(monkeypatch)
     graph = estimator.transform("A causes B.")
-    paragraph = "A very long paragraph that should be wrapped across multiple lines."
+    document = "A very long document that should be wrapped across multiple lines."
     figure, axes = estimator.display(
         graph,
-        paragraph=paragraph,
+        document=document,
         max_char=20,
         show=False,
     )
@@ -544,8 +660,38 @@ def test_display_labels_include_associated_words():
         "infection",
         {"label": "Infection", "word": "infection"},
         False,
-    ) == "Infection\ninfection"
+    ) == "infection\ninfection"
     assert TextGraphicalizer._edge_display_label(
         {"label": "causes", "word": "caused"},
         False,
     ) == "causes\ncaused"
+
+
+def test_display_node_labels_use_distinct_normal_fonts(monkeypatch):
+    pytest.importorskip("matplotlib")
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.text import Annotation
+
+    estimator = fitted(monkeypatch)
+    graph = nx.DiGraph()
+    graph.add_node("animal", label="Animal", span="Fox")
+    figure, axes = estimator.display(
+        graph,
+        layout="circular",
+        show_edge_labels=False,
+        show=False,
+    )
+
+    annotations = {
+        annotation.get_text(): annotation
+        for annotation in axes.get_children()
+        if isinstance(annotation, Annotation)
+    }
+    assert annotations["animal"].get_fontfamily() == ["monospace"]
+    assert annotations["animal"].get_fontweight() == "normal"
+    assert annotations["Fox"].get_fontfamily() == ["serif"]
+    assert annotations["Fox"].get_fontweight() == "normal"
+    plt.close(figure)
