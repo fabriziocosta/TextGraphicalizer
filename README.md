@@ -172,6 +172,10 @@ After grounding, empty nodes are collapsed into adjacent grounded nodes using
 the strongest grounded node as the stable target; their incident edges are
 redirected and duplicate redirected edges are merged. Empty components with
 no grounded anchor are left unchanged.
+In LLM mode, a second structured call checks adjacent grounded nodes for
+story-level coreference (for example, `goose`, `animal`, and `entity`).
+Confirmed duplicates are collapsed into the more specific concept; their
+edges are redirected and merged in the same way.
 
 ## Rendering graphs
 

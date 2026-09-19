@@ -163,11 +163,19 @@ class OpenAIGroundingBackend:
             "a selected concept graph. Return only the requested structured output. "
             "A paraphrase is a newly worded expression of how the document conveys "
             "the concept or relation; it does not have to be a verbatim substring. "
-            "Use a meaningful phrase or very short sentence of at most twelve words, "
+            "Use a meaningful short phrase, normally two to eight words and never "
+            "more than twelve words, "
             "not a generic function word or the ontology label by itself. Give each "
             "node the best supported paraphrase, including when the concept is "
-            "implicit or abstract. Use an empty string only when the document gives "
-            "no meaningful support at all."
+            "implicit or abstract. For entity and category concepts, return one "
+            "focused noun phrase for the salient concrete story referent that "
+            "instantiates the concept "
+            "rather than a broad summary of the whole story. Avoid phrases such as "
+            "the story involves ... when a specific referent can be identified. "
+            "For example, for entity, physical entity, and animal nodes all "
+            "expressed by a goose, prefer the focused phrase the goose. "
+            "Use an empty string only when the document gives no meaningful support "
+            "at all."
         )
         user_prompt = (
             "DOCUMENT:\n"
@@ -325,7 +333,11 @@ class OpenAIGroundingBackend:
             "semantic relatedness or a type/subtype relationship. For example, "
             "a goose, an animal, and a physical entity can refer to the same goose "
             "when their document expressions support that reading. If they are "
-            "the same referent, choose the more specific ontology concept to keep; "
+            "the same referent, even if one node uses a generic ontology concept, "
+            "compare the concrete story referents expressed by the nodes rather "
+            "than treating the generic label as a separate entity. A broad node "
+            "that names several different participants should not be merged with "
+            "all of them. Choose the more specific ontology concept to keep; "
             "never keep a generic supertype when the other concept is its specific "
             "instance or subtype. An explicit is_a edge points from the more "
             "specific source to the more general target. Return only the requested "
@@ -338,7 +350,10 @@ class OpenAIGroundingBackend:
             f"{pair_descriptions}\n\n"
             "TASK:\n"
             "For every pair, set same_entity to true only when both nodes refer "
-            "to the same story referent. If true, set keep_node_id to the more "
+            "to the same concrete story referent. A generic concept and a specific "
+            "concept can still be the same referent: if both document expressions "
+            "explicitly identify the same goose, person, object, or event, set it "
+            "to true even when their ontology labels differ. If true, set keep_node_id to the more "
             "specific concept; otherwise set keep_node_id to an empty string. "
             "Do not merge nodes only because one is related to, connected to, or "
             "a superclass of the other."
@@ -379,6 +394,15 @@ class OpenAIGroundingBackend:
         for source, target in graph.edges:
             node_a, node_b = str(source), str(target)
             if node_a == node_b or node_a not in concepts or node_b not in concepts:
+                continue
+            if not all(
+                any(
+                    graph.nodes[node_id].get(field) is not None
+                    and str(graph.nodes[node_id].get(field))
+                    for field in ("paraphrase", "span", "word")
+                )
+                for node_id in (source, target)
+            ):
                 continue
             key = frozenset((node_a, node_b))
             if key in seen:

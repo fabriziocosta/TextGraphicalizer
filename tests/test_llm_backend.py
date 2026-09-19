@@ -160,6 +160,7 @@ def test_llm_backend_finds_same_entity_merges_for_adjacent_nodes():
     prompt = client.responses.kwargs["input"][1]["content"]
     assert 'node_a_id="animal"' in prompt
     assert "same story referent" in client.responses.kwargs["input"][0]["content"]
+    assert "concrete story referent" in client.responses.kwargs["input"][0]["content"]
 
 
 def test_llm_backend_requires_system_api_key(monkeypatch):

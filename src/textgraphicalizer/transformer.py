@@ -788,7 +788,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             re.sub(r"[^a-z0-9]+", "_", part.casefold()).strip("_")
             for value in relation_values
             if value is not None
-            for part in str(value).split(" /")
+            for part in re.split(r"\s*/\s*", str(value))
         }
         return "is_a" in normalized_relations
 
@@ -921,15 +921,22 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             data.get("label"),
         )
         normalized_relations = {
-            re.sub(r"[^a-z0-9]+", "_", str(value).casefold()).strip("_")
+            re.sub(r"[^a-z0-9]+", "_", part.casefold()).strip("_")
             for value in relation_values
             if value is not None
+            for part in re.split(r"\s*/\s*", str(value))
         }
         if "is_a" in normalized_relations:
             return ""
         parts = []
         if data.get("label") is not None:
-            parts.append(str(data["label"]))
+            labels = [
+                part
+                for part in re.split(r"\s*/\s*", str(data["label"]))
+                if re.sub(r"[^a-z0-9]+", "_", part.casefold()).strip("_") != "is_a"
+            ]
+            if labels:
+                parts.append(" / ".join(labels))
         grounding = TextGraphicalizer._grounding_display_value(data)
         if grounding is not None:
             parts.append(grounding)
