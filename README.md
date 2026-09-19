@@ -34,12 +34,24 @@ idempotent. The model weights are not stored in this repository. To run
 offline, pass a previously downloaded Laya snapshot with `model_path` and
 ensure the configured span-grounding checkpoint is cached.
 
-Set `use_llm=True` to replace cross-encoder grounding with one structured
-OpenAI Responses API call over the selected graph. The default model is
-`gpt-4.1-mini`; set `llm_model` to another OpenAI model ID if needed. The
-backend reads `OPENAI_API_KEY` from the environment and asks for a concise,
-context-sensitive paraphrase for each selected concept and relation. These
-LLM paraphrases are allowed to express implicit concepts and are stored as
+Set `use_llm=True` to replace cross-encoder grounding with structured LLM
+calls over the selected graph. The default provider remains `openai`, using
+`gpt-4.1-mini` and `OPENAI_API_KEY`. To use a locally hosted Ollama model,
+select `llm_provider="ollama"`; its default model is `gemma4:12b-mlx` and its
+default endpoint is `http://localhost:11434`:
+
+```python
+extractor = TextGraphicalizer(
+    ontology="ontology.yaml",
+    use_llm=True,
+    llm_provider="ollama",
+)
+```
+
+Set `llm_model` to override either provider's default, or set
+`ollama_base_url` for another Ollama endpoint. The backend asks for a concise,
+context-sensitive paraphrase for each selected concept and relation. These LLM
+paraphrases are allowed to express implicit concepts and are stored as
 `paraphrase`; unlike cross-encoder spans, they do not have document offsets.
 
 By default, graph selection uses the MILP optimizer. Set `use_milp=False` to
@@ -84,6 +96,29 @@ than baking example entities into the default ontology. See the [Princeton
 WordNet overview](https://wordnet.princeton.edu/) and its documentation of
 semantic relations.
 
+## Fairy-tale ontology
+
+[`fairy_tale_ontology.yaml`](fairy_tale_ontology.yaml) is a separate,
+Propp-inspired application ontology for fairy tales. The reference is Vladimir
+Propp—not Fodor—whose *Morphology of the Folktale* describes recurring
+character functions (hero, adversary, donor, helper, dispatcher, false hero,
+and sought person/prize) and recurring plot functions. The ontology groups
+those functions into reusable events such as departure, prohibition,
+misfortune/lack, quest, trial, gift, struggle, pursuit, rescue, recognition,
+punishment, and reward/union rather than copying all 31 functions as separate
+concepts. See [Propp's *Morphology of the Folktale*](https://www.jstor.org/stable/10.7560/783911.19)
+and the overview of its seven character classes and 31 functions in [Bikakis
+et al.](https://journals.sagepub.com/doi/full/10.3233/SW-200417).
+
+It also adds reusable story-world concepts for people, animals, magical beings,
+groups/families, places, dwellings, ordinary objects, and magical objects.
+Use it explicitly when graphicalizing the Aesop corpus:
+
+```python
+extractor.ontology = "fairy_tale_ontology.yaml"
+graph = extractor.transform(stories[0])
+```
+
 ## Aesop corpus
 
 `load_aesop_fables()` downloads the UTF-8 text of [Project Gutenberg eBook
@@ -123,6 +158,7 @@ For LLM-based grounding:
 extractor = TextGraphicalizer(
     ontology="ontology.yaml",
     use_llm=True,
+    llm_provider="openai",
     llm_model="gpt-4.1-mini",
 )
 graph = extractor.transform("An infection caused the patient to develop a fever.")
@@ -176,6 +212,10 @@ In LLM mode, a second structured call checks adjacent grounded nodes for
 story-level coreference (for example, `goose`, `animal`, and `entity`).
 Confirmed duplicates are collapsed into the more specific concept; their
 edges are redirected and merged in the same way.
+After all node collapsing is complete, a final LLM review re-evaluates every
+remaining edge against the ontology. It may relabel an edge, reverse its
+direction so an agent/causer precedes its patient/recipient, or remove it when
+no ontology relation is supported.
 
 ## Rendering graphs
 

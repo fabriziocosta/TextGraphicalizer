@@ -88,3 +88,42 @@ def test_reference_ontology_stays_general():
     assert "causes" in {
         relation.id for relation in ontology.valid_relations("event", "state")
     }
+
+
+def test_fairy_tale_ontology_is_a_separate_propp_inspired_application_ontology():
+    ontology = load_ontology("fairy_tale_ontology.yaml")
+    concept_ids = {concept.id for concept in ontology.concepts}
+    relation_ids = {relation.id for relation in ontology.relations}
+
+    assert {
+        "person",
+        "animal",
+        "magical_being",
+        "place",
+        "ordinary_object",
+        "magical_object",
+        "hero",
+        "adversary",
+        "donor",
+        "helper",
+        "quest_or_task",
+        "test_or_trial",
+        "struggle",
+        "recognition_or_revelation",
+        "reward_or_union",
+    } <= concept_ids
+    assert {
+        "is_a",
+        "plays_role",
+        "helps",
+        "opposes",
+        "participates_in",
+        "precedes",
+    } <= relation_ids
+    assert "plays_role" in {
+        relation.id for relation in ontology.valid_relations("animal", "hero")
+    }
+    assert "precedes" in {
+        relation.id
+        for relation in ontology.valid_relations("misfortune_or_lack", "quest_or_task")
+    }

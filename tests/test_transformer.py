@@ -1,7 +1,7 @@
 import networkx as nx
 import pytest
 
-from textgraphicalizer import TextGraphicalizer
+from textgraphicalizer import Relation, TextGraphicalizer
 from textgraphicalizer.span_backend import Span, SpanScore
 
 ONTOLOGY = {
@@ -185,6 +185,43 @@ def test_use_llm_selects_openai_grounding_backend(monkeypatch):
     assert graph.graph["grounding_method"] == "openai_llm_graph_assignment"
     assert graph.graph["grounding_model_id"] == "gpt-4.1-mini"
     assert graph.graph["grounding_value_type"] == "paraphrase"
+
+
+def test_use_llm_selects_ollama_with_local_default_model(monkeypatch):
+    monkeypatch.setattr(
+        "textgraphicalizer.transformer.LayaBackend.load",
+        lambda self: FakeBackend(),
+    )
+
+    class FakeLlmBackend:
+        model_id = "gemma4:12b-mlx"
+
+        def ground_graph(self, text, graph, concepts, edges):
+            del text, graph, concepts, edges
+            return {}, {}
+
+    loaded = []
+
+    def load_ollama(self):
+        loaded.append((self.model_id, self.base_url))
+        return FakeLlmBackend()
+
+    monkeypatch.setattr(
+        "textgraphicalizer.transformer.OllamaGroundingBackend.load",
+        load_ollama,
+    )
+    monkeypatch.setattr(
+        "textgraphicalizer.transformer.SpanGroundingBackend.load",
+        lambda self: pytest.fail("cross-encoder should not load in LLM mode"),
+    )
+
+    estimator = TextGraphicalizer(ONTOLOGY, use_llm=True, llm_provider="ollama")
+    graph = estimator.transform("A causes B.")
+
+    assert loaded == [("gemma4:12b-mlx", "http://localhost:11434")]
+    assert graph.graph["grounding_method"] == "ollama_llm_graph_assignment"
+    assert graph.graph["llm_provider"] == "ollama"
+    assert graph.graph["grounding_model_id"] == "gemma4:12b-mlx"
 
 
 def test_transform_refreshes_grounding_backend_when_use_llm_changes(monkeypatch):
@@ -384,6 +421,32 @@ def test_semantic_cleanup_keeps_the_specific_is_a_concept_and_redirects_edges():
     assert collapsed == {"entity": "animal"}
     assert set(graph.nodes) == {"animal", "food"}
     assert graph.has_edge("animal", "food")
+
+
+def test_final_relation_review_can_reverse_edges_and_remove_unsupported_edges():
+    graph = nx.DiGraph()
+    graph.add_node("agent", label="Agent")
+    graph.add_node("patient", label="Patient")
+    graph.add_node("other", label="Other")
+    graph.add_edge("agent", "patient", label="old")
+    graph.add_edge("agent", "other", label="unsupported")
+
+    revised, removed = TextGraphicalizer._apply_relation_revisions(
+        graph,
+        {
+            ("agent", "patient"): ("patient", "agent", "helps", True),
+            ("agent", "other"): ("agent", "other", "", False),
+        },
+        {
+            "helps": Relation("helps", "helps", "Assists another participant."),
+        },
+    )
+
+    assert revised == {"agent->patient": "patient->agent:helps"}
+    assert removed == ["agent->other"]
+    assert not graph.has_edge("agent", "patient")
+    assert graph.edges["patient", "agent"]["label"] == "helps"
+    assert not graph.has_edge("agent", "other")
 
 
 def test_grounding_uses_nli_entailment_scoring(monkeypatch):
@@ -689,6 +752,9 @@ def test_display_d3_returns_force_directed_html(monkeypatch):
     assert "unpkg.com/d3@7.9.0/dist/d3.min.js" in rendered.data
     assert "window.__textGraphicalizerD3PromiseV2 = null" in rendered.data
     assert "forceSimulation" in rendered.data
+    assert "positionLinkLabels" in rendered.data
+    assert "getComputedTextLength" in rendered.data
+    assert 'attr("paint-order", "stroke")' in rendered.data
     assert '"#94a3b8"' in rendered.data
     assert '"#64748b"' not in rendered.data
     assert 'append("circle")' not in rendered.data

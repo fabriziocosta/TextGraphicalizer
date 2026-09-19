@@ -2,7 +2,11 @@ import json
 
 import networkx as nx
 
-from textgraphicalizer.llm_backend import OpenAIGroundingBackend
+from textgraphicalizer.llm_backend import (
+    DEFAULT_OLLAMA_LLM_MODEL,
+    OllamaGroundingBackend,
+    OpenAIGroundingBackend,
+)
 from textgraphicalizer.span_backend import ConceptDescription
 
 
@@ -163,6 +167,86 @@ def test_llm_backend_finds_same_entity_merges_for_adjacent_nodes():
     assert "concrete story referent" in client.responses.kwargs["input"][0]["content"]
 
 
+def test_llm_backend_revises_relation_label_and_agent_patient_direction():
+    graph = nx.DiGraph()
+    graph.add_node("agent", label="Agent", paraphrase="the fox")
+    graph.add_node("patient", label="Patient", paraphrase="the grapes")
+    graph.add_edge("agent", "patient", label="related to")
+    client = FakeClient(
+        {
+            "edges": [
+                {
+                    "edge_id": "edge_0",
+                    "source_id": "patient",
+                    "target_id": "agent",
+                    "keep_edge": True,
+                    "relation_id": "helps",
+                }
+            ]
+        }
+    )
+    backend = OpenAIGroundingBackend(client=client)
+
+    revisions = backend.revise_relationships(
+        "The fox reaches for the grapes.",
+        graph,
+        {
+            "agent": ConceptDescription("Agent", "An actor."),
+            "patient": ConceptDescription("Patient", "An affected entity."),
+        },
+        {
+            "causes": ConceptDescription("causes", "Produces or leads to."),
+            "helps": ConceptDescription("helps", "Assists another participant."),
+        },
+        {
+            ("agent", "patient"): ("causes",),
+            ("patient", "agent"): ("helps",),
+        },
+    )
+
+    assert revisions == {
+        ("agent", "patient"): ("patient", "agent", "helps", True)
+    }
+    prompt = client.responses.kwargs["input"][1]["content"]
+    assert "allowed_ontology_relations_by_direction" in prompt
+    assert "agent, actor, causer, or giver" in client.responses.kwargs["input"][0]["content"]
+
+
+def test_llm_backend_marks_unsupported_relation_for_removal():
+    graph = nx.DiGraph()
+    graph.add_node("a", label="A", paraphrase="one")
+    graph.add_node("b", label="B", paraphrase="two")
+    graph.add_edge("a", "b", label="related to")
+    backend = OpenAIGroundingBackend(
+        client=FakeClient(
+            {
+                "edges": [
+                    {
+                        "edge_id": "edge_0",
+                        "source_id": "",
+                        "target_id": "",
+                        "keep_edge": False,
+                        "relation_id": "",
+                    }
+                ]
+            }
+        )
+    )
+
+    revisions = backend.revise_relationships(
+        "A document.",
+        graph,
+        {
+            "a": ConceptDescription("A", "First."),
+            "b": ConceptDescription("B", "Second."),
+        },
+        {"related_to": ConceptDescription("related to", "Related.")},
+        {("a", "b"): ("related_to",), ("b", "a"): ()},
+    )
+
+    assert revisions == {("a", "b"): ("a", "b", "", False)}
+
+
 def test_llm_backend_requires_system_api_key(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     backend = OpenAIGroundingBackend()
@@ -173,3 +257,42 @@ def test_llm_backend_requires_system_api_key(monkeypatch):
         assert "OPENAI_API_KEY" in str(exc)
     else:
         raise AssertionError("expected missing API key to fail")
+
+
+def test_ollama_backend_uses_local_chat_api_and_json_schema(monkeypatch):
+    class FakeHttpResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {"message": {"content": '```json\n{"ok": true}\n```'}}
+            ).encode("utf-8")
+
+    requests = []
+
+    def fake_urlopen(request, timeout):
+        requests.append((request, timeout))
+        return FakeHttpResponse()
+
+    monkeypatch.setattr("textgraphicalizer.llm_backend.urlopen", fake_urlopen)
+    backend = OllamaGroundingBackend()
+
+    payload = backend._structured_completion(
+        "system",
+        "user",
+        {"type": "object", "properties": {"ok": {"type": "boolean"}}},
+        "test_schema",
+    )
+
+    assert payload == {"ok": True}
+    request, timeout = requests[0]
+    request_payload = json.loads(request.data.decode("utf-8"))
+    assert request.full_url == "http://localhost:11434/api/chat"
+    assert request_payload["model"] == DEFAULT_OLLAMA_LLM_MODEL
+    assert request_payload["stream"] is False
+    assert request_payload["format"]["type"] == "object"
+    assert timeout == 120.0

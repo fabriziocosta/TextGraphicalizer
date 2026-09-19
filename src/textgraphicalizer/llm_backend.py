@@ -1,4 +1,4 @@
-"""OpenAI-backed graph paraphrase assignment."""
+"""Provider-backed graph paraphrase assignment."""
 
 from __future__ import annotations
 
@@ -7,8 +7,14 @@ import os
 import re
 from collections.abc import Mapping
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 _WORD_RE = re.compile(r"[A-Za-z]+(?:['’][A-Za-z]+)?")
+
+DEFAULT_OPENAI_LLM_MODEL = "gpt-4.1-mini"
+DEFAULT_OLLAMA_LLM_MODEL = "gemma4:12b-mlx"
+DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 
 GROUNDING_RESPONSE_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -78,15 +84,45 @@ SEMANTIC_MERGE_RESPONSE_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 
+RELATION_REVIEW_RESPONSE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "edges": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "edge_id": {"type": "string"},
+                    "source_id": {"type": "string"},
+                    "target_id": {"type": "string"},
+                    "keep_edge": {"type": "boolean"},
+                    "relation_id": {"type": "string"},
+                },
+                "required": [
+                    "edge_id",
+                    "source_id",
+                    "target_id",
+                    "keep_edge",
+                    "relation_id",
+                ],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["edges"],
+    "additionalProperties": False,
+}
+
 
 class OpenAIGroundingBackend:
     """Use an OpenAI model to assign document paraphrases to a selected graph."""
 
     _MAX_PARAPHRASE_WORDS = 12
+    provider = "openai"
 
     def __init__(
         self,
-        model_id: str = "gpt-4.1-mini",
+        model_id: str = DEFAULT_OPENAI_LLM_MODEL,
         api_key: str | None = None,
         client: Any | None = None,
     ) -> None:
@@ -111,6 +147,53 @@ class OpenAIGroundingBackend:
             )
         self.client = OpenAI(api_key=api_key)
         return self
+
+    @staticmethod
+    def _parse_structured_output(raw_output: str, provider: str) -> Mapping[str, Any]:
+        """Parse a provider response and tolerate Markdown JSON fences."""
+        cleaned = raw_output.strip()
+        if cleaned.startswith("```") and cleaned.endswith("```"):
+            cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned).strip()
+        try:
+            payload = json.loads(cleaned)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{provider} grounding response was not valid JSON") from exc
+        if not isinstance(payload, Mapping):
+            raise ValueError(f"{provider} grounding response must be a JSON object")
+        return payload
+
+    def _structured_completion(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        schema: Mapping[str, Any],
+        schema_name: str,
+    ) -> Mapping[str, Any]:
+        """Request one schema-constrained response from the active provider."""
+        if self.client is None:
+            self.load()
+        if self.client is None:
+            raise RuntimeError("OpenAI client is not loaded")
+        response = self.client.responses.create(
+            model=self.model_id,
+            input=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": schema_name,
+                    "strict": True,
+                    "schema": schema,
+                }
+            },
+            store=False,
+        )
+        raw_output = getattr(response, "output_text", "")
+        if not raw_output:
+            raise ValueError("OpenAI grounding response did not contain output_text")
+        return self._parse_structured_output(raw_output, "OpenAI")
 
     @staticmethod
     def _concept_parts(concept: Any) -> tuple[str, str]:
@@ -154,10 +237,6 @@ class OpenAIGroundingBackend:
         graph: Any,
         concepts: Mapping[str, Any],
     ) -> Mapping[str, Any]:
-        if self.client is None:
-            self.load()
-        if self.client is None:
-            raise RuntimeError("OpenAI client is not loaded")
         system_prompt = (
             "You assign concise, context-sensitive paraphrases from a document to "
             "a selected concept graph. Return only the requested structured output. "
@@ -190,29 +269,12 @@ class OpenAIGroundingBackend:
             "different paraphrases when the concepts are distinct, but do not force "
             "a distinction that the document does not support."
         )
-        response = self.client.responses.create(
-            model=self.model_id,
-            input=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            text={
-                "format": {
-                    "type": "json_schema",
-                    "name": "graph_grounding",
-                    "strict": True,
-                    "schema": GROUNDING_RESPONSE_SCHEMA,
-                }
-            },
-            store=False,
+        return self._structured_completion(
+            system_prompt,
+            user_prompt,
+            GROUNDING_RESPONSE_SCHEMA,
+            "graph_grounding",
         )
-        raw_output = getattr(response, "output_text", "")
-        if not raw_output:
-            raise ValueError("OpenAI grounding response did not contain output_text")
-        payload = json.loads(raw_output)
-        if not isinstance(payload, Mapping):
-            raise ValueError("OpenAI grounding response must be a JSON object")
-        return payload
 
     @classmethod
     def _normalize_paraphrase(cls, paraphrase: Any) -> str | None:
@@ -224,12 +286,11 @@ class OpenAIGroundingBackend:
             return None
         return normalized
 
-    @staticmethod
-    def _paraphrase_data(paraphrase: str) -> dict[str, Any]:
+    def _paraphrase_data(self, paraphrase: str) -> dict[str, Any]:
         return {
             "paraphrase": paraphrase,
             "grounding_score": 1.0,
-            "grounding_method": "openai_llm_paraphrase",
+            "grounding_method": f"{self.provider}_llm_paraphrase",
         }
 
     def ground_graph(
@@ -318,10 +379,6 @@ class OpenAIGroundingBackend:
         concepts: Mapping[str, Any],
         pairs: list[tuple[str, str, str]],
     ) -> Mapping[str, Any]:
-        if self.client is None:
-            self.load()
-        if self.client is None:
-            raise RuntimeError("OpenAI client is not loaded")
         pair_descriptions = "\n".join(
             self._semantic_pair_description(pair_id, node_a, node_b, graph, concepts)
             for pair_id, node_a, node_b in pairs
@@ -358,29 +415,12 @@ class OpenAIGroundingBackend:
             "Do not merge nodes only because one is related to, connected to, or "
             "a superclass of the other."
         )
-        response = self.client.responses.create(
-            model=self.model_id,
-            input=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            text={
-                "format": {
-                    "type": "json_schema",
-                    "name": "semantic_graph_merges",
-                    "strict": True,
-                    "schema": SEMANTIC_MERGE_RESPONSE_SCHEMA,
-                }
-            },
-            store=False,
+        return self._structured_completion(
+            system_prompt,
+            user_prompt,
+            SEMANTIC_MERGE_RESPONSE_SCHEMA,
+            "semantic_graph_merges",
         )
-        raw_output = getattr(response, "output_text", "")
-        if not raw_output:
-            raise ValueError("OpenAI semantic merge response did not contain output_text")
-        payload = json.loads(raw_output)
-        if not isinstance(payload, Mapping):
-            raise ValueError("OpenAI semantic merge response must be a JSON object")
-        return payload
 
     def find_semantic_merges(
         self,
@@ -439,3 +479,198 @@ class OpenAIGroundingBackend:
             if keep_node_id in pair:
                 results.append((pair[0], pair[1], keep_node_id))
         return results
+
+    def _request_relation_review(
+        self,
+        text: str,
+        graph: Any,
+        concepts: Mapping[str, Any],
+        relations: Mapping[str, Any],
+        allowed_relations: Mapping[tuple[str, str], tuple[str, ...]],
+    ) -> Mapping[str, Any]:
+        edge_descriptions: list[str] = []
+        for edge_index, (source, target, data) in enumerate(graph.edges(data=True)):
+            source_id, target_id = str(source), str(target)
+            edge_id = f"edge_{edge_index}"
+            source_label = graph.nodes[source].get("label", source)
+            target_label = graph.nodes[target].get("label", target)
+            source_concept = self._concept_parts(concepts[source_id])
+            target_concept = self._concept_parts(concepts[target_id])
+            orientations = [(source_id, target_id)]
+            if source_id != target_id:
+                orientations.append((target_id, source_id))
+            orientation_options = []
+            for orientation_source, orientation_target in orientations:
+                options = allowed_relations.get(
+                    (orientation_source, orientation_target),
+                    (),
+                )
+                option_text = "; ".join(
+                    f'{relation_id}={self._concept_parts(relations[relation_id])[0]}: '
+                    f'{self._concept_parts(relations[relation_id])[1]}'
+                    for relation_id in options
+                    if relation_id in relations
+                )
+                orientation_options.append(
+                    f'{orientation_source} -> {orientation_target}: '
+                    f'{option_text or "(none)"}'
+                )
+            edge_descriptions.append(
+                f'EDGE edge_id="{edge_id}" current_source_id="{source_id}" '
+                f'current_target_id="{target_id}"\n'
+                f'  source_label="{source_label}" source_concept="{source_concept[0]}: '
+                f'{source_concept[1]}" expression="{self._node_expression(graph.nodes[source])}"\n'
+                f'  target_label="{target_label}" target_concept="{target_concept[0]}: '
+                f'{target_concept[1]}" expression="{self._node_expression(graph.nodes[target])}"\n'
+                f'  current_relation="{data.get("label", "")}" '
+                f'current_relation_expression="{self._node_expression(data)}"\n'
+                f'  allowed_ontology_relations_by_direction: '
+                f'{" | ".join(orientation_options)}'
+            )
+        system_prompt = (
+            "You revise the relationships in a story graph. For every listed edge, "
+            "choose the source and target direction and exactly one relation_id from "
+            "that direction's allowed ontology relations, using the document and the "
+            "source/target concepts as context. For agent-patient relations, put the "
+            "agent, actor, causer, or giver in source_id and the patient, affected "
+            "entity, recipient, or result in target_id. The current relation may be "
+            "wrong or may be a merged placeholder. "
+            "keep_edge to false when none of the allowed ontology relations is "
+            "supported. Never invent relation IDs, labels, or relations outside the "
+            "provided ontology. Return only the requested structured output."
+        )
+        user_prompt = (
+            "DOCUMENT:\n"
+            f"{text}\n\n"
+            "ONTOLOGY RELATION REVIEW:\n"
+            f"{chr(10).join(edge_descriptions)}\n\n"
+            "TASK:\n"
+            "Return one decision for every edge. If keep_edge is true, relation_id "
+            "must be allowed for the returned source_id -> target_id direction. "
+            "The returned endpoints must be the two endpoints of the listed edge, "
+            "possibly reversed. If keep_edge is false, use an empty relation_id."
+        )
+        return self._structured_completion(
+            system_prompt,
+            user_prompt,
+            RELATION_REVIEW_RESPONSE_SCHEMA,
+            "ontology_relation_review",
+        )
+
+    def revise_relationships(
+        self,
+        text: str,
+        graph: Any,
+        concepts: Mapping[str, Any],
+        relations: Mapping[str, Any],
+        allowed_relations: Mapping[tuple[str, str], tuple[str, ...]],
+    ) -> dict[tuple[str, str], tuple[str, str, str, bool]]:
+        """Relabel and orient surviving edges with ontology relations."""
+        if not graph.edges:
+            return {}
+        payload = self._request_relation_review(
+            text,
+            graph,
+            concepts,
+            relations,
+            allowed_relations,
+        )
+        edge_result: dict[tuple[str, str], tuple[str, str, str, bool]] = {}
+        edge_by_id = {
+            f"edge_{edge_index}": (str(source), str(target))
+            for edge_index, (source, target) in enumerate(graph.edges)
+        }
+        graph_edges = set(edge_by_id.values())
+        raw_edges = payload.get("edges", [])
+        if not isinstance(raw_edges, list):
+            return edge_result
+        for item in raw_edges:
+            if not isinstance(item, Mapping):
+                continue
+            current_key = edge_by_id.get(str(item.get("edge_id", "")))
+            if current_key is None or current_key in edge_result:
+                continue
+            keep_edge = item.get("keep_edge") is True
+            source_id = str(item.get("source_id", ""))
+            target_id = str(item.get("target_id", ""))
+            relation_id = str(item.get("relation_id", ""))
+            if not keep_edge:
+                edge_result[current_key] = (*current_key, "", False)
+                continue
+            oriented_key = (source_id, target_id)
+            if oriented_key not in graph_edges and oriented_key != current_key[::-1]:
+                continue
+            if relation_id not in allowed_relations.get(oriented_key, ()):
+                continue
+            edge_result[current_key] = (source_id, target_id, relation_id, keep_edge)
+        return edge_result
+
+
+class OllamaGroundingBackend(OpenAIGroundingBackend):
+    """Use a locally hosted Ollama chat model for the same graph tasks."""
+
+    provider = "ollama"
+
+    def __init__(
+        self,
+        model_id: str = DEFAULT_OLLAMA_LLM_MODEL,
+        base_url: str = DEFAULT_OLLAMA_BASE_URL,
+        timeout: float = 120.0,
+        client: Any | None = None,
+    ) -> None:
+        # ``client`` is retained as a small testing/integration escape hatch;
+        # normal operation talks to Ollama's local HTTP API directly.
+        super().__init__(model_id=model_id, client=client)
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+
+    def load(self) -> "OllamaGroundingBackend":
+        """Validate the endpoint configuration without starting a server."""
+        if not self.base_url:
+            raise ValueError("Ollama base_url must be a non-empty URL")
+        return self
+
+    def _structured_completion(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        schema: Mapping[str, Any],
+        schema_name: str,
+    ) -> Mapping[str, Any]:
+        del schema_name
+        payload = {
+            "model": self.model_id,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "stream": False,
+            "format": schema,
+        }
+        request = Request(
+            f"{self.base_url}/api/chat",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=self.timeout) as response:
+                response_payload = json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            raise RuntimeError(
+                f"Ollama request failed with HTTP {exc.code} at {self.base_url}; "
+                f"check that model {self.model_id!r} is available"
+            ) from exc
+        except (URLError, OSError) as exc:
+            raise RuntimeError(
+                f"Could not connect to Ollama at {self.base_url}. Start Ollama "
+                f"with `ollama serve` and make sure model {self.model_id!r} is available."
+            ) from exc
+        except json.JSONDecodeError as exc:
+            raise ValueError("Ollama response was not valid JSON") from exc
+
+        message = response_payload.get("message")
+        raw_output = message.get("content") if isinstance(message, Mapping) else None
+        if not isinstance(raw_output, str) or not raw_output.strip():
+            raise ValueError("Ollama response did not contain message.content")
+        return self._parse_structured_output(raw_output, "Ollama")

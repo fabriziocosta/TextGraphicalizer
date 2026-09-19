@@ -19,7 +19,13 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.utils.validation import check_is_fitted
 
 from .laya_backend import LayaBackend
-from .llm_backend import OpenAIGroundingBackend
+from .llm_backend import (
+    DEFAULT_OLLAMA_BASE_URL,
+    DEFAULT_OLLAMA_LLM_MODEL,
+    DEFAULT_OPENAI_LLM_MODEL,
+    OllamaGroundingBackend,
+    OpenAIGroundingBackend,
+)
 from .ontology import Ontology, load_ontology
 from .optimizer import EdgeEvidence, NodeEvidence, select_graph, select_graph_by_threshold
 from .span_backend import ConceptDescription, SpanGroundingBackend, SpanScore
@@ -91,7 +97,9 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         stopwords_path: str | Path | None = None,
         grounding_model_id: str = "cross-encoder/stsb-distilroberta-base",
         use_llm: bool = False,
-        llm_model: str = "gpt-4.1-mini",
+        llm_provider: str = "openai",
+        llm_model: str | None = None,
+        ollama_base_url: str = DEFAULT_OLLAMA_BASE_URL,
     ) -> None:
         self.ontology = ontology
         self.model_id = model_id
@@ -106,7 +114,9 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         self.stopwords_path = stopwords_path
         self.grounding_model_id = grounding_model_id
         self.use_llm = use_llm
+        self.llm_provider = llm_provider
         self.llm_model = llm_model
+        self.ollama_base_url = ollama_base_url
         self.load_model()
 
     def _load_configuration(self) -> None:
@@ -136,9 +146,17 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             raise TypeError("grounding_model_id must be a non-empty string")
         if not isinstance(self.use_llm, bool):
             raise TypeError("use_llm must be a bool")
-        if not isinstance(self.llm_model, str) or not self.llm_model:
-            raise TypeError("llm_model must be a non-empty string")
-        if not self.llm_model.startswith(("gpt-", "o1", "o3", "o4", "chatgpt-")):
+        if self.llm_provider not in {"openai", "ollama"}:
+            raise ValueError("llm_provider must be either 'openai' or 'ollama'")
+        if self.llm_model is not None:
+            if not isinstance(self.llm_model, str) or not self.llm_model:
+                raise TypeError("llm_model must be a non-empty string or None")
+        if not isinstance(self.ollama_base_url, str) or not self.ollama_base_url:
+            raise TypeError("ollama_base_url must be a non-empty string")
+        effective_llm_model = self._effective_llm_model()
+        if self.llm_provider == "openai" and not effective_llm_model.startswith(
+            ("gpt-", "o1", "o3", "o4", "chatgpt-")
+        ):
             raise ValueError("llm_model must be an OpenAI model ID")
         for name, value in (
             ("node_threshold", self.node_threshold),
@@ -190,23 +208,43 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             self._load_grounding_backend()
         return self
 
-    def _grounding_signature(self) -> tuple[bool, str, str | None]:
+    def _effective_llm_model(self) -> str:
+        if self.llm_model is not None:
+            return self.llm_model
+        if self.llm_provider == "ollama":
+            return DEFAULT_OLLAMA_LLM_MODEL
+        return DEFAULT_OPENAI_LLM_MODEL
+
+    def _grounding_signature(self) -> tuple[Any, ...]:
         """Return the settings that determine the active grounding backend."""
         if self.use_llm:
-            return True, self.llm_model, None
+            return (
+                True,
+                self.llm_provider,
+                self._effective_llm_model(),
+                self.ollama_base_url,
+            )
         return False, self.grounding_model_id, self.device
 
     def _load_grounding_backend(self) -> None:
         """Load the grounding backend selected by the current settings."""
+        grounding_backend: Any
         if self.use_llm:
-            self.grounding_backend_: Any = OpenAIGroundingBackend(
-                model_id=self.llm_model,
-            ).load()
+            if self.llm_provider == "ollama":
+                grounding_backend = OllamaGroundingBackend(
+                    model_id=self._effective_llm_model(),
+                    base_url=self.ollama_base_url,
+                ).load()
+            else:
+                grounding_backend = OpenAIGroundingBackend(
+                    model_id=self._effective_llm_model(),
+                ).load()
         else:
-            self.grounding_backend_ = SpanGroundingBackend(
+            grounding_backend = SpanGroundingBackend(
                 model_id=self.grounding_model_id,
                 device=self.device,
             ).load()
+        self.grounding_backend_ = grounding_backend
         self._loaded_grounding_signature = self._grounding_signature()
 
     def _node_questions(self) -> dict[str, dict[str, Any]]:
@@ -847,6 +885,42 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
 
         return collapsed
 
+    @classmethod
+    def _apply_relation_revisions(
+        cls,
+        graph: nx.DiGraph,
+        revisions: Mapping[tuple[str, str], tuple[str, str, str, bool]],
+        relation_by_id: Mapping[str, Any],
+    ) -> tuple[dict[str, str], list[str]]:
+        """Apply final LLM relation labels, directions, and removals."""
+        original_edges = {
+            key: dict(graph.edges[key])
+            for key in revisions
+            if graph.has_edge(*key)
+        }
+        for source, target in original_edges:
+            graph.remove_edge(source, target)
+
+        revised: dict[str, str] = {}
+        removed: list[str] = []
+        for current_key, decision in revisions.items():
+            original_data = original_edges.get(current_key)
+            if original_data is None:
+                continue
+            source, target, relation_id, keep_edge = decision
+            edge_name = f"{current_key[0]}->{current_key[1]}"
+            if not keep_edge:
+                removed.append(edge_name)
+                continue
+            relation = relation_by_id.get(relation_id)
+            if relation is None or source not in graph or target not in graph or source == target:
+                continue
+            data = dict(original_data)
+            data.update({"relation_id": relation.id, "label": relation.label})
+            cls._merge_redirected_edge(graph, source, target, data)
+            revised[edge_name] = f"{source}->{target}:{relation.id}"
+        return revised, removed
+
     @staticmethod
     def _node_display_parts(
         node: Any,
@@ -1135,6 +1209,46 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                 graph,
                 semantic_merges,
             )
+        revised_edges: dict[str, str] = {}
+        removed_edges: list[str] = []
+        if self.use_llm and hasattr(self.grounding_backend_, "revise_relationships"):
+            review_concepts = {
+                str(node): node_descriptions[str(node)]
+                for node in graph.nodes
+                if str(node) in node_descriptions
+            }
+            relation_descriptions = {
+                relation.id: ConceptDescription(
+                    label=relation.label,
+                    description=relation.description,
+                )
+                for relation in relation_by_id.values()
+            }
+            allowed_relations: dict[tuple[str, str], tuple[str, ...]] = {}
+            for source, target in graph.edges:
+                for oriented_source, oriented_target in (
+                    (str(source), str(target)),
+                    (str(target), str(source)),
+                ):
+                    allowed_relations[(oriented_source, oriented_target)] = tuple(
+                        relation.id
+                        for relation in self.ontology_.valid_relations(
+                            oriented_source,
+                            oriented_target,
+                        )
+                    )
+            relation_revisions = self.grounding_backend_.revise_relationships(
+                text,
+                graph,
+                review_concepts,
+                relation_descriptions,
+                allowed_relations,
+            )
+            revised_edges, removed_edges = self._apply_relation_revisions(
+                graph,
+                relation_revisions,
+                relation_by_id,
+            )
         span_backend = hasattr(self.grounding_backend_, "generate_candidates")
         candidate_spans = (
             self.grounding_backend_.generate_candidates(text) if span_backend else []
@@ -1165,7 +1279,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                     candidate.text for candidate in candidate_spans
                 ],
                 "grounding_method": (
-                    "openai_llm_graph_assignment"
+                    f"{self.llm_provider}_llm_graph_assignment"
                     if self.use_llm
                     else (
                         "cross_encoder_span_similarity"
@@ -1173,14 +1287,17 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                         else "nli_contrastive_entailment"
                     )
                 ),
+                "llm_provider": self.llm_provider if self.use_llm else None,
                 "grounding_model_id": (
-                    self.llm_model if self.use_llm else self.grounding_model_id
+                    self._effective_llm_model() if self.use_llm else self.grounding_model_id
                 ),
-                "llm_model": self.llm_model if self.use_llm else None,
+                "llm_model": self._effective_llm_model() if self.use_llm else None,
                 "grounding_value_type": "paraphrase" if self.use_llm else "span",
                 "grounding_collapsed_nodes": collapsed_nodes,
                 "grounding_uncollapsed_nodes": uncollapsed_nodes,
                 "grounding_semantically_collapsed_nodes": semantic_collapsed_nodes,
+                "grounding_revised_edges": revised_edges,
+                "grounding_removed_edges": removed_edges,
                 "grounding_top_k": self._GROUNDING_TOP_K,
                 "input_truncated": self.backend_.was_truncated(
                     text,
@@ -1671,11 +1788,18 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
     svg.call(d3.zoom().scaleExtent([0.25, 4]).on("zoom", (event) => {
       layer.attr("transform", event.transform);
     }));
+    const labelData = data.links.filter((d) => d.label);
     const simulation = d3.forceSimulation(data.nodes)
       .force("link", d3.forceLink(data.links).id((d) => d.id).distance(150))
       .force("charge", d3.forceManyBody().strength(-480))
       .force("center", d3.forceCenter(width / 2, height / 2))
-      .force("collision", d3.forceCollide().radius(42));
+      .force("collision", d3.forceCollide().radius((d) => {
+        const labelWidth = Math.max(
+          String(d.label || "").length * 6.6,
+          String(d.evidence || "").length * 6.2,
+        );
+        return Math.max(42, labelWidth / 2 + 12);
+      }));
     const links = layer.append("g")
       .attr("stroke", "#94a3b8")
       .attr("stroke-opacity", 0.7)
@@ -1688,10 +1812,14 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
       .attr("font-family", "serif")
       .attr("font-size", 11)
       .selectAll("text")
-      .data(data.links.filter((d) => d.label))
+      .data(labelData)
       .join("text")
       .attr("text-anchor", "middle")
       .attr("fill", "#334155")
+      .attr("paint-order", "stroke")
+      .attr("stroke", "#f7f8fa")
+      .attr("stroke-width", 4)
+      .attr("stroke-linejoin", "round")
       .text((d) => d.label);
     const nodes = layer.append("g")
       .selectAll("g")
@@ -1725,11 +1853,69 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         .attr("y1", (d) => d.source.y)
         .attr("x2", (d) => d.target.x)
         .attr("y2", (d) => d.target.y);
-      linkLabels
-        .attr("x", (d) => (d.source.x + d.target.x) / 2)
-        .attr("y", (d) => (d.source.y + d.target.y) / 2);
       nodes.attr("transform", (d) => `translate(${d.x},${d.y})`);
+      positionLinkLabels();
     });
+    function positionLinkLabels() {
+      const positions = [];
+      linkLabels.each(function (d) {
+        const element = this;
+        positions.push({
+          element,
+          x: (d.source.x + d.target.x) / 2,
+          y: (d.source.y + d.target.y) / 2,
+          width: Math.max(element.getComputedTextLength(), 24),
+          height: 14,
+        });
+      });
+
+      const obstacles = [];
+      if (__SHOW_NODE_LABELS__) {
+        nodes.each(function (d) {
+          const text = this.querySelector("text");
+          if (!text) return;
+          const box = text.getBBox();
+          obstacles.push({
+            x: d.x + box.x + box.width / 2,
+            y: d.y + box.y + box.height / 2,
+            width: box.width,
+            height: box.height,
+          });
+        });
+      }
+
+      for (let pass = 0; pass < 4; pass += 1) {
+        positions.forEach((label) => {
+          obstacles.forEach((obstacle) => separate(label, obstacle));
+        });
+        for (let first = 0; first < positions.length; first += 1) {
+          for (let second = first + 1; second < positions.length; second += 1) {
+            separate(positions[first], positions[second]);
+          }
+        }
+      }
+      positions.forEach((label) => {
+        d3.select(label.element).attr("x", label.x).attr("y", label.y);
+      });
+    }
+
+    function separate(first, second) {
+      const overlapX = (first.width + second.width) / 2 + 4
+        - Math.abs(first.x - second.x);
+      const overlapY = (first.height + second.height) / 2 + 4
+        - Math.abs(first.y - second.y);
+      if (overlapX <= 0 || overlapY <= 0) return;
+
+      if (overlapX < overlapY) {
+        const direction = first.x <= second.x ? -1 : 1;
+        first.x += direction * overlapX / 2;
+        if (second.element) second.x -= direction * overlapX / 2;
+      } else {
+        const direction = first.y <= second.y ? -1 : 1;
+        first.y += direction * overlapY / 2;
+        if (second.element) second.y -= direction * overlapY / 2;
+      }
+    }
     function dragstarted(event, d) {
       if (!event.active) simulation.alphaTarget(0.3).restart();
       d.fx = d.x;

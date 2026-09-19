@@ -14,7 +14,13 @@ from .errors import (
     LayaResponseError,
     OntologyError,
 )
-from .llm_backend import OpenAIGroundingBackend
+from .llm_backend import (
+    DEFAULT_OLLAMA_BASE_URL,
+    DEFAULT_OLLAMA_LLM_MODEL,
+    DEFAULT_OPENAI_LLM_MODEL,
+    OllamaGroundingBackend,
+    OpenAIGroundingBackend,
+)
 from .nli_backend import NliGroundingBackend
 from .ontology import Concept, Ontology, Relation, load_ontology
 from .span_backend import ConceptDescription, Span, SpanGroundingBackend, SpanScore
@@ -25,6 +31,9 @@ __all__ = [
     "AESOP_SOURCE_URL",
     "Concept",
     "DEFAULT_AESOP_CACHE_PATH",
+    "DEFAULT_OLLAMA_BASE_URL",
+    "DEFAULT_OLLAMA_LLM_MODEL",
+    "DEFAULT_OPENAI_LLM_MODEL",
     "GraphOptimizationError",
     "LayaBackendError",
     "LayaInferenceError",
@@ -34,6 +43,7 @@ __all__ = [
     "OntologyError",
     "Relation",
     "NliGroundingBackend",
+    "OllamaGroundingBackend",
     "OpenAIGroundingBackend",
     "ConceptDescription",
     "Span",

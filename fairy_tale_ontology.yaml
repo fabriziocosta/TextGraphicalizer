@@ -1,0 +1,259 @@
+# A compact, Propp-inspired ontology for fairy tales.
+#
+# This is intentionally separate from ontology.yaml.  It combines reusable
+# story-world entities with character functions and grouped narrative events;
+# it is not intended to encode every one of Propp's 31 functions as a separate
+# concept.  Character roles are functions a person, animal, group, or magical
+# being can perform, not mutually exclusive biological types.
+
+version: 1
+
+concepts:
+  # Story-world entities.
+  - id: person
+    label: Person
+    description: A human character in the tale, whether ordinary, royal, poor, young, or old.
+    grounding_terms: [person, man, woman, boy, girl, child, king, queen, prince, princess]
+
+  - id: animal
+    label: Animal
+    description: An animal character or animal appearing as a meaningful participant in the tale.
+    grounding_terms: [animal, fox, wolf, cat, mouse, dog, bird, goose, horse, lion, bear]
+
+  - id: magical_being
+    label: Magical being
+    description: A supernatural or enchanted character such as a fairy, witch, giant, dragon, or spirit.
+    grounding_terms: [fairy, witch, giant, dragon, ogre, wizard, spirit, monster]
+
+  - id: group_or_family
+    label: Group or family
+    description: A family, household, community, or other group treated as a story participant.
+    grounding_terms: [family, parents, brothers, sisters, household, people, villagers]
+
+  - id: place
+    label: Place
+    description: A location or region where a character lives, travels, hides, or acts.
+    grounding_terms: [place, kingdom, village, forest, mountain, river, road, castle]
+
+  - id: dwelling
+    label: Dwelling
+    description: A building or home that serves as a significant setting or destination.
+    grounding_terms: [house, home, cottage, castle, palace, hut, room]
+
+  - id: ordinary_object
+    label: Ordinary object
+    description: A physical item used, possessed, lost, exchanged, or sought in the tale.
+    grounding_terms: [object, key, basket, coat, shoe, rope, mill, egg]
+
+  - id: magical_object
+    label: Magical object
+    description: An enchanted item or extraordinary means that enables, signals, or changes an action.
+    grounding_terms: [magic, magical, enchanted, ring, sword, cloak, wand, spell]
+
+  # Propp-inspired character functions.  One story entity may perform several.
+  - id: hero
+    label: Hero
+    description: The central seeker or protagonist who responds to a lack, task, danger, or quest.
+
+  - id: adversary
+    label: Adversary
+    description: The villain or opposing force that harms, deceives, blocks, pursues, or challenges the hero.
+
+  - id: donor
+    label: Donor
+    description: A character who tests the hero and provides a magical aid, object, knowledge, or blessing.
+
+  - id: helper
+    label: Helper
+    description: A character, animal, object, or force that assists the hero in overcoming an obstacle.
+
+  - id: dispatcher
+    label: Dispatcher
+    description: A character or circumstance that sends the hero away or makes the quest necessary.
+
+  - id: false_hero
+    label: False hero
+    description: A rival who claims the hero's achievement, reward, or identity without deserving it.
+
+  - id: sought_person_or_prize
+    label: Sought person or prize
+    description: The person, object, freedom, home, treasure, or status that the hero seeks or wins.
+
+  # Grouped narrative events.  These collect related Proppian functions into
+  # concepts that remain useful for short and non-Russian fairy tales.
+  - id: departure
+    label: Departure or journey
+    description: A character leaves an ordinary setting, travels, or enters the tale's adventure world.
+
+  - id: prohibition
+    label: Prohibition
+    description: A warning, rule, command, or interdiction that tells a character what not to do.
+
+  - id: transgression
+    label: Transgression
+    description: The breaking, ignoring, or testing of a prohibition or social rule.
+
+  - id: deception
+    label: Deception or disguise
+    description: A trick, lie, disguise, false claim, or misleading appearance used by a character.
+
+  - id: misfortune_or_lack
+    label: Misfortune or lack
+    description: A harm, loss, absence, abduction, need, or deficiency that creates the tale's central problem.
+
+  - id: quest_or_task
+    label: Quest or task
+    description: A mission, difficult task, search, or counteraction undertaken to resolve a lack or danger.
+
+  - id: test_or_trial
+    label: Test or trial
+    description: A challenge or examination that reveals a character's courage, kindness, worth, or fitness.
+
+  - id: gift_or_blessing
+    label: Gift or blessing
+    description: The granting of help, knowledge, protection, a magical object, or another enabling benefit.
+
+  - id: struggle
+    label: Struggle or conflict
+    description: A direct contest, battle, argument, chase, or other confrontation between opposing forces.
+
+  - id: pursuit_or_escape
+    label: Pursuit or escape
+    description: A character pursues, flees, hides from, or escapes another character or danger.
+
+  - id: rescue
+    label: Rescue
+    description: A character or force saves, frees, recovers, or brings another out of danger or captivity.
+
+  - id: return
+    label: Return or homecoming
+    description: A character comes back, arrives home, or reaches a safe or intended destination.
+
+  - id: recognition_or_revelation
+    label: Recognition or revelation
+    description: A hidden identity, truth, deed, kinship, or rightful status becomes known.
+
+  - id: punishment
+    label: Punishment
+    description: An adversary, deceiver, or transgressor is exposed, defeated, judged, or punished.
+
+  - id: transformation
+    label: Transformation
+    description: A character, object, or situation changes form, status, condition, or appearance.
+
+  - id: reward_or_union
+    label: Reward or union
+    description: The hero receives a reward, marriage, reunion, throne, prosperity, or lasting resolution.
+
+relations:
+  - id: is_a
+    label: is a
+    description: The source is a kind of, instance of, or specialization of the target.
+
+  - id: plays_role
+    label: plays role
+    description: A story-world participant performs a recurring character function in the tale.
+    source_concepts: [person, animal, magical_being, group_or_family, ordinary_object, magical_object]
+    target_concepts: [hero, adversary, donor, helper, dispatcher, false_hero, sought_person_or_prize]
+
+  - id: located_in
+    label: located in
+    description: The source is situated, lives, happens, or is found in the target place or dwelling.
+    target_concepts: [place, dwelling]
+
+  - id: travels_to
+    label: travels to
+    description: The source travels, departs, returns, or is sent toward the target place.
+    source_concepts: [person, animal, magical_being, group_or_family, hero, adversary, helper]
+    target_concepts: [place, dwelling]
+
+  - id: seeks
+    label: seeks
+    description: The source searches for, wants, follows, or attempts to obtain the target.
+    source_concepts: [person, animal, magical_being, hero, adversary, false_hero, group_or_family]
+    target_concepts: [person, animal, magical_being, place, dwelling, ordinary_object, magical_object, sought_person_or_prize, quest_or_task]
+
+  - id: has_or_uses
+    label: has or uses
+    description: The source possesses, carries, receives, or uses the target object or aid.
+    source_concepts: [person, animal, magical_being, group_or_family, hero, adversary, helper, donor]
+    target_concepts: [ordinary_object, magical_object, gift_or_blessing]
+
+  - id: helps
+    label: helps
+    description: The source assists the target in a task, struggle, journey, rescue, or resolution.
+    source_concepts: [person, animal, magical_being, group_or_family, helper, donor, magical_object]
+    target_concepts: [person, animal, magical_being, hero, sought_person_or_prize, quest_or_task, rescue]
+
+  - id: opposes
+    label: opposes
+    description: The source resists, harms, deceives, or works against the target's aim.
+    source_concepts: [person, animal, magical_being, group_or_family, adversary, false_hero]
+    target_concepts: [person, animal, magical_being, group_or_family, hero, helper, sought_person_or_prize]
+
+  - id: tests
+    label: tests
+    description: The source challenges or examines the target before granting passage, aid, or recognition.
+    source_concepts: [person, animal, magical_being, donor, adversary]
+    target_concepts: [person, animal, magical_being, hero, helper, false_hero]
+
+  - id: gives
+    label: gives
+    description: The source gives, grants, lends, or transfers an object, aid, knowledge, or blessing to the target.
+    source_concepts: [person, animal, magical_being, donor, helper]
+    target_concepts: [person, animal, magical_being, hero, helper, ordinary_object, magical_object, gift_or_blessing]
+
+  - id: dispatches
+    label: dispatches
+    description: The source sends, charges, or directs the target to undertake a journey or quest.
+    source_concepts: [person, group_or_family, dispatcher, donor]
+    target_concepts: [person, animal, magical_being, hero, helper, quest_or_task, departure]
+
+  - id: pursues
+    label: pursues
+    description: The source chases, tracks, captures, or seeks to overtake the target.
+    source_concepts: [person, animal, magical_being, adversary, false_hero]
+    target_concepts: [person, animal, magical_being, hero, helper, sought_person_or_prize]
+
+  - id: rescues
+    label: rescues
+    description: The source frees, saves, recovers, or brings the target out of danger or captivity.
+    source_concepts: [person, animal, magical_being, hero, helper, donor, magical_object]
+    target_concepts: [person, animal, magical_being, hero, helper, sought_person_or_prize]
+
+  - id: participates_in
+    label: participates in
+    description: The source is an agent, object, setting, or participant in the target event.
+    source_concepts: [person, animal, magical_being, group_or_family, place, dwelling, ordinary_object, magical_object, hero, adversary, donor, helper, dispatcher, false_hero, sought_person_or_prize]
+    target_concepts: [departure, prohibition, transgression, deception, misfortune_or_lack, quest_or_task, test_or_trial, gift_or_blessing, struggle, pursuit_or_escape, rescue, return, recognition_or_revelation, punishment, transformation, reward_or_union]
+
+  - id: causes
+    label: causes
+    description: The source brings about, triggers, or is responsible for the target event or condition.
+    source_concepts: [person, animal, magical_being, group_or_family, hero, adversary, donor, helper, dispatcher, false_hero, departure, prohibition, transgression, deception, misfortune_or_lack, quest_or_task, test_or_trial, gift_or_blessing, struggle, pursuit_or_escape, rescue, return, recognition_or_revelation, punishment, transformation, reward_or_union]
+    target_concepts: [departure, prohibition, transgression, deception, misfortune_or_lack, quest_or_task, test_or_trial, gift_or_blessing, struggle, pursuit_or_escape, rescue, return, recognition_or_revelation, punishment, transformation, reward_or_union]
+
+  - id: precedes
+    label: precedes
+    description: The source event occurs before and helps lead into the target event.
+    source_concepts: [departure, prohibition, transgression, deception, misfortune_or_lack, quest_or_task, test_or_trial, gift_or_blessing, struggle, pursuit_or_escape, rescue, return, recognition_or_revelation, punishment, transformation]
+    target_concepts: [departure, prohibition, transgression, deception, misfortune_or_lack, quest_or_task, test_or_trial, gift_or_blessing, struggle, pursuit_or_escape, rescue, return, recognition_or_revelation, punishment, transformation, reward_or_union]
+
+  - id: transforms
+    label: transforms
+    description: The source changes the target's form, status, appearance, condition, or identity.
+    source_concepts: [person, animal, magical_being, magical_object, transformation, gift_or_blessing, recognition_or_revelation]
+    target_concepts: [person, animal, magical_being, group_or_family, ordinary_object, magical_object, hero, adversary, sought_person_or_prize]
+
+  - id: rewards
+    label: rewards
+    description: The source grants the target a prize, union, status, safety, prosperity, or other favorable outcome.
+    source_concepts: [person, group_or_family, donor, helper, sought_person_or_prize, reward_or_union]
+    target_concepts: [person, animal, magical_being, hero, helper, sought_person_or_prize, reward_or_union]
+
+  - id: punishes
+    label: punishes
+    description: The source exposes, defeats, judges, or imposes a penalty on the target.
+    source_concepts: [person, group_or_family, hero, helper, donor, punishment, recognition_or_revelation]
+    target_concepts: [person, animal, magical_being, adversary, false_hero, group_or_family]
+
