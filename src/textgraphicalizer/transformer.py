@@ -9,7 +9,7 @@ import textwrap
 from collections import Counter
 from collections.abc import Collection, Sequence
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, cast
 from uuid import uuid4
 
 import networkx as nx
@@ -33,6 +33,31 @@ logger = logging.getLogger(__name__)
 
 
 _WORD_RE = re.compile(r"[A-Za-z]+(?:['’][A-Za-z]+)?")
+_D3_SOURCE_URLS = (
+    "https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js",
+    "https://unpkg.com/d3@7.9.0/dist/d3.min.js",
+)
+_D3_SOURCE_CACHE: str | None = None
+
+
+def _load_d3_source() -> str:
+    """Fetch D3 once so notebook HTML can run without external script loading."""
+    global _D3_SOURCE_CACHE
+    if _D3_SOURCE_CACHE is not None:
+        return _D3_SOURCE_CACHE
+    from urllib.request import Request, urlopen
+
+    for url in _D3_SOURCE_URLS:
+        try:
+            request = Request(url, headers={"User-Agent": "TextGraphicalizer/0.1"})
+            with urlopen(request, timeout=10) as response:
+                source = cast(str, response.read().decode("utf-8"))
+            if source:
+                _D3_SOURCE_CACHE = source
+                return source
+        except Exception as exc:
+            logger.debug("Could not fetch D3 source from %s: %s", url, exc)
+    return ""
 
 
 def _confidence(answer: Mapping[str, Any]) -> float | None:
@@ -1255,6 +1280,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         show_probabilities: bool = False,
         show_document: bool = True,
         max_char: int = 100,
+        inline_d3: bool = True,
     ) -> Any:
         """Return an interactive D3 force-directed graph for notebook display."""
         if document is not None and paragraph is not None:
@@ -1278,6 +1304,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             ("show_edge_labels", show_edge_labels),
             ("show_probabilities", show_probabilities),
             ("show_document", show_document),
+            ("inline_d3", inline_d3),
         ):
             if not isinstance(value, bool):
                 raise TypeError(f"{name} must be a bool")
@@ -1328,6 +1355,11 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             "links": links,
         }
         data_json = json.dumps(payload, ensure_ascii=False).replace("<", "\\u003c")
+        inline_d3_source = (
+            json.dumps(_load_d3_source()).replace("<", "\\u003c")
+            if inline_d3
+            else '""'
+        )
         html = """
 <div id="__GRAPH_ID__" class="textgraphicalizer-d3"></div>
 <script>
@@ -1336,20 +1368,58 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
   const data = __GRAPH_DATA__;
   const width = __WIDTH__;
   const height = __HEIGHT__;
+  const inlineD3Source = __INLINE_D3_SOURCE__;
 
   function loadD3() {
     if (window.d3) return Promise.resolve(window.d3);
-    if (window.__textGraphicalizerD3Promise) {
-      return window.__textGraphicalizerD3Promise;
+    if (window.__textGraphicalizerD3PromiseV2) {
+      return window.__textGraphicalizerD3PromiseV2;
     }
-    window.__textGraphicalizerD3Promise = new Promise((resolve, reject) => {
-      const script = document.createElement("script");
-      script.src = "https://cdn.jsdelivr.net/npm/d3@7";
-      script.onload = () => resolve(window.d3);
-      script.onerror = reject;
-      document.head.appendChild(script);
+    let inlineError = null;
+    if (inlineD3Source) {
+      try {
+        const script = document.createElement("script");
+        script.textContent = inlineD3Source;
+        document.head.appendChild(script);
+        if (window.d3) return Promise.resolve(window.d3);
+        inlineError = new Error("Inline D3.js source did not create window.d3");
+      } catch (error) {
+        inlineError = error;
+      }
+    }
+    const sources = [
+      "https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js",
+      "https://unpkg.com/d3@7.9.0/dist/d3.min.js",
+      "https://d3js.org/d3.v7.min.js",
+    ];
+    const promise = new Promise((resolve, reject) => {
+      function trySource(index, lastError) {
+        if (window.d3) {
+          resolve(window.d3);
+          return;
+        }
+        if (index >= sources.length) {
+          reject(lastError || new Error("No D3.js source could be loaded"));
+          return;
+        }
+        const script = document.createElement("script");
+        script.src = sources[index];
+        script.onload = () => {
+          if (window.d3) resolve(window.d3);
+          else trySource(index + 1, new Error("D3.js loaded without a global d3"));
+        };
+        script.onerror = (error) => trySource(index + 1, error);
+        document.head.appendChild(script);
+      }
+      trySource(0, inlineError);
     });
-    return window.__textGraphicalizerD3Promise;
+    window.__textGraphicalizerD3PromiseV2 = promise;
+    promise.catch(() => {
+      if (window.__textGraphicalizerD3PromiseV2 === promise) {
+        window.__textGraphicalizerD3PromiseV2 = null;
+      }
+    });
+    return promise;
   }
 
   function render(d3) {
@@ -1461,8 +1531,9 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
     }
   }
 
-  loadD3().then(render).catch(() => {
-    container.textContent = "Could not load D3.js for the interactive graph.";
+  loadD3().then(render).catch((error) => {
+    console.error("Could not load D3.js for the interactive graph", error);
+    container.textContent = "Could not load D3.js. Check notebook network access and rerun this cell.";
   });
 })();
 </script>
@@ -1480,6 +1551,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             .replace("__GRAPH_DATA__", data_json)
             .replace("__WIDTH__", str(width))
             .replace("__HEIGHT__", str(height))
+            .replace("__INLINE_D3_SOURCE__", inline_d3_source)
             .replace("__SHOW_NODE_LABELS__", "true" if show_node_labels else "false")
         )
         return HTML(html)

@@ -610,6 +610,10 @@ def test_display_d3_returns_force_directed_html(monkeypatch):
     pytest.importorskip("IPython")
 
     estimator = fitted(monkeypatch)
+    monkeypatch.setattr(
+        "textgraphicalizer.transformer._load_d3_source",
+        lambda: "window.d3 = {};",
+    )
     graph = nx.DiGraph()
     graph.add_node("a", label="Animal", span="Fox", probability=0.8)
     graph.add_node("b", label="Entity", probability=0.7)
@@ -622,6 +626,9 @@ def test_display_d3_returns_force_directed_html(monkeypatch):
     )
 
     assert "d3@7" in rendered.data
+    assert "window.d3 = {};" in rendered.data
+    assert "unpkg.com/d3@7.9.0/dist/d3.min.js" in rendered.data
+    assert "window.__textGraphicalizerD3PromiseV2 = null" in rendered.data
     assert "forceSimulation" in rendered.data
     assert "animal" in rendered.data
     assert "is a" not in rendered.data
