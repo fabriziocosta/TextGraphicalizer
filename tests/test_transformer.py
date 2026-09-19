@@ -329,6 +329,63 @@ def test_transform_returns_graph_with_evidence(monkeypatch):
     assert graph.graph["input_truncated"] is False
 
 
+def test_cleanup_absorbs_empty_nodes_and_redirects_their_edges():
+    graph = nx.DiGraph()
+    graph.add_node("source", label="Source", paraphrase="the source", probability=0.8)
+    graph.add_node("empty", label="Empty", probability=0.2)
+    graph.add_node("target", label="Target", word="the target", probability=0.9)
+    graph.add_node("sink", label="Sink", paraphrase="the sink", probability=0.7)
+    graph.add_edge("source", "empty", label="supports", probability=0.4)
+    graph.add_edge("empty", "target", label="points to", probability=0.6)
+    graph.add_edge("empty", "sink", label="leads to", probability=0.6)
+    graph.add_edge("source", "target", label="already exists", probability=0.7)
+    graph.add_edge("target", "sink", label="already exists", probability=0.5)
+
+    collapsed, uncollapsed = TextGraphicalizer._collapse_empty_nodes(graph)
+
+    assert collapsed == {"empty": "target"}
+    assert uncollapsed == []
+    assert set(graph.nodes) == {"source", "target", "sink"}
+    assert graph.has_edge("source", "target")
+    assert graph.edges["source", "target"]["probability"] == pytest.approx(0.7)
+    assert graph.edges["target", "sink"]["probability"] == pytest.approx(0.6)
+    assert "leads to" in graph.edges["target", "sink"]["label"]
+
+
+def test_cleanup_repeats_through_empty_node_chains_and_leaves_unanchored_nodes():
+    graph = nx.DiGraph()
+    graph.add_node("grounded", label="Grounded", paraphrase="evidence", probability=0.8)
+    graph.add_node("first", label="First")
+    graph.add_node("second", label="Second")
+    graph.add_node("unanchored", label="Unanchored")
+    graph.add_edge("grounded", "first", label="r1")
+    graph.add_edge("first", "second", label="r2")
+
+    collapsed, uncollapsed = TextGraphicalizer._collapse_empty_nodes(graph)
+
+    assert collapsed == {"first": "grounded", "second": "grounded"}
+    assert uncollapsed == ["unanchored"]
+    assert set(graph.nodes) == {"grounded", "unanchored"}
+
+
+def test_semantic_cleanup_keeps_the_specific_is_a_concept_and_redirects_edges():
+    graph = nx.DiGraph()
+    graph.add_node("entity", label="Entity", paraphrase="the goose", probability=0.9)
+    graph.add_node("animal", label="Animal", paraphrase="the goose", probability=0.8)
+    graph.add_node("food", label="Food", paraphrase="the egg", probability=0.7)
+    graph.add_edge("animal", "entity", relation_id="is_a", label="is a", probability=0.8)
+    graph.add_edge("entity", "food", label="related to", probability=0.5)
+
+    collapsed = TextGraphicalizer._collapse_semantic_nodes(
+        graph,
+        [("animal", "entity", "entity")],
+    )
+
+    assert collapsed == {"entity": "animal"}
+    assert set(graph.nodes) == {"animal", "food"}
+    assert graph.has_edge("animal", "food")
+
+
 def test_grounding_uses_nli_entailment_scoring(monkeypatch):
     estimator = fitted(monkeypatch)
     graph = estimator.transform("The infection caused a fever.")

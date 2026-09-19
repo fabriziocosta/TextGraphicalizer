@@ -168,6 +168,11 @@ When `use_llm=True`, this span-assignment process is replaced by the LLM's
 context-sensitive paraphrases, so multiple concepts may be described even
 when the document does not contain distinct matching surface spans.
 
+After grounding, empty nodes are collapsed into adjacent grounded nodes using
+the strongest grounded node as the stable target; their incident edges are
+redirected and duplicate redirected edges are merged. Empty components with
+no grounded anchor are left unchanged.
+
 ## Rendering graphs
 
 `TextGraphicalizer.display()` renders any resulting graph and returns its

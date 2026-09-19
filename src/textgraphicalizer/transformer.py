@@ -656,6 +656,198 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         return None
 
     @staticmethod
+    def _node_probability(graph: nx.DiGraph, node: Any) -> float:
+        try:
+            return float(graph.nodes[node].get("probability", 0.0))
+        except (TypeError, ValueError):
+            return 0.0
+
+    @classmethod
+    def _merge_redirected_edge(
+        cls,
+        graph: nx.DiGraph,
+        source: Any,
+        target: Any,
+        data: Mapping[str, Any],
+    ) -> None:
+        """Add a redirected edge, merging it if the DiGraph already has one."""
+        if not graph.has_edge(source, target):
+            graph.add_edge(source, target, **dict(data))
+            return
+
+        merged = dict(graph.edges[source, target])
+        for field in ("label", "relation_id", "relation"):
+            relation_values = list(dict.fromkeys(
+                str(value)
+                for value in (merged.get(field), data.get(field))
+                if value is not None
+            ))
+            if relation_values:
+                merged[field] = " / ".join(relation_values)
+        for field in ("paraphrase", "span", "word"):
+            display_values = list(dict.fromkeys(
+                str(value)
+                for value in (merged.get(field), data.get(field))
+                if value is not None
+            ))
+            if display_values:
+                merged[field] = " / ".join(display_values)
+        for field in ("probability", "existence_probability", "relation_probability"):
+            numeric_values = [
+                float(value)
+                for value in (merged.get(field), data.get(field))
+                if value is not None
+            ]
+            if numeric_values:
+                merged[field] = max(numeric_values)
+        graph.edges[source, target].update(merged)
+
+    @classmethod
+    def _absorb_node(cls, graph: nx.DiGraph, node: Any, target: Any) -> None:
+        """Redirect all incident edges from ``node`` to ``target`` and remove it."""
+        incoming = [
+            (source, dict(data))
+            for source, _, data in graph.in_edges(node, data=True)
+            if source != node
+        ]
+        outgoing = [
+            (destination, dict(data))
+            for _, destination, data in graph.out_edges(node, data=True)
+            if destination != node
+        ]
+        graph.remove_node(node)
+        for source, data in incoming:
+            if source != target:
+                cls._merge_redirected_edge(graph, source, target, data)
+        for destination, data in outgoing:
+            if destination != target:
+                cls._merge_redirected_edge(graph, target, destination, data)
+
+    @classmethod
+    def _collapse_empty_nodes(
+        cls,
+        graph: nx.DiGraph,
+    ) -> tuple[dict[str, str], list[str]]:
+        """Absorb ungrounded nodes into nearby grounded nodes.
+
+        An empty node is assigned to the adjacent grounded node with the
+        strongest node probability, with a stable node-id tie-breaker. The
+        process repeats so chains of empty nodes can reach a grounded node.
+        Empty components with no grounded anchor are left unchanged because
+        there is no meaningful node to absorb them into.
+        """
+        collapsed: dict[str, str] = {}
+
+        while True:
+            grounded = {
+                node
+                for node, data in graph.nodes(data=True)
+                if cls._grounding_display_value(data) is not None
+            }
+            assignments: list[tuple[Any, Any]] = []
+            for node, data in graph.nodes(data=True):
+                if cls._grounding_display_value(data) is not None:
+                    continue
+                neighbors = set(graph.predecessors(node)) | set(graph.successors(node))
+                candidates = [neighbor for neighbor in neighbors if neighbor in grounded]
+                if not candidates:
+                    continue
+                target = sorted(
+                    candidates,
+                    key=lambda candidate: (
+                        -cls._node_probability(graph, candidate),
+                        str(candidate),
+                    ),
+                )[0]
+                assignments.append((node, target))
+
+            if not assignments:
+                break
+
+            for node, target in assignments:
+                if node not in graph or target not in graph:
+                    continue
+                cls._absorb_node(graph, node, target)
+                collapsed[str(node)] = str(target)
+
+        uncollapsed = [
+            str(node)
+            for node, data in graph.nodes(data=True)
+            if cls._grounding_display_value(data) is None
+        ]
+        return collapsed, uncollapsed
+
+    @staticmethod
+    def _is_is_a_relation(data: Mapping[str, Any]) -> bool:
+        relation_values = (
+            data.get("relation_id"),
+            data.get("relation"),
+            data.get("label"),
+        )
+        normalized_relations = {
+            re.sub(r"[^a-z0-9]+", "_", part.casefold()).strip("_")
+            for value in relation_values
+            if value is not None
+            for part in str(value).split(" /")
+        }
+        return "is_a" in normalized_relations
+
+    @classmethod
+    def _most_specific_node(
+        cls,
+        graph: nx.DiGraph,
+        node_a: Any,
+        node_b: Any,
+        requested: Any,
+    ) -> Any:
+        explicit_specific_nodes = [
+            source
+            for source, target in ((node_a, node_b), (node_b, node_a))
+            if graph.has_edge(source, target)
+            and cls._is_is_a_relation(graph.edges[source, target])
+        ]
+        if len(explicit_specific_nodes) == 1:
+            return explicit_specific_nodes[0]
+        return requested
+
+    @classmethod
+    def _collapse_semantic_nodes(
+        cls,
+        graph: nx.DiGraph,
+        merges: Sequence[tuple[str, str, str]],
+    ) -> dict[str, str]:
+        """Apply LLM-approved co-reference merges, preserving specific nodes."""
+        collapsed: dict[str, str] = {}
+        aliases: dict[str, str] = {}
+
+        def resolve(node: Any) -> Any:
+            current = str(node)
+            visited: set[str] = set()
+            while current in aliases and current not in visited:
+                visited.add(current)
+                current = aliases[current]
+            return current
+
+        for raw_a, raw_b, raw_requested in merges:
+            node_a = resolve(raw_a)
+            node_b = resolve(raw_b)
+            requested = resolve(raw_requested)
+            if (
+                node_a == node_b
+                or node_a not in graph
+                or node_b not in graph
+                or requested not in {node_a, node_b}
+            ):
+                continue
+            target = cls._most_specific_node(graph, node_a, node_b, requested)
+            node = node_b if target == node_a else node_a
+            cls._absorb_node(graph, node, target)
+            aliases[node] = target
+            collapsed[str(node)] = str(target)
+
+        return collapsed
+
+    @staticmethod
     def _node_display_parts(
         node: Any,
         data: Mapping[str, Any],
@@ -920,6 +1112,22 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             )
         self._attach_node_words(graph, node_words)
         self._attach_edge_words(graph, edge_words)
+        collapsed_nodes, uncollapsed_nodes = self._collapse_empty_nodes(graph)
+        semantic_collapsed_nodes: dict[str, str] = {}
+        if self.use_llm and hasattr(self.grounding_backend_, "find_semantic_merges"):
+            semantic_merges = self.grounding_backend_.find_semantic_merges(
+                text,
+                graph,
+                {
+                    str(node): node_descriptions[str(node)]
+                    for node in graph.nodes
+                    if str(node) in node_descriptions
+                },
+            )
+            semantic_collapsed_nodes = self._collapse_semantic_nodes(
+                graph,
+                semantic_merges,
+            )
         span_backend = hasattr(self.grounding_backend_, "generate_candidates")
         candidate_spans = (
             self.grounding_backend_.generate_candidates(text) if span_backend else []
@@ -963,6 +1171,9 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                 ),
                 "llm_model": self.llm_model if self.use_llm else None,
                 "grounding_value_type": "paraphrase" if self.use_llm else "span",
+                "grounding_collapsed_nodes": collapsed_nodes,
+                "grounding_uncollapsed_nodes": uncollapsed_nodes,
+                "grounding_semantically_collapsed_nodes": semantic_collapsed_nodes,
                 "grounding_top_k": self._GROUNDING_TOP_K,
                 "input_truncated": self.backend_.was_truncated(
                     text,

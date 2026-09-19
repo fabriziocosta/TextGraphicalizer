@@ -126,6 +126,42 @@ def test_llm_grounding_rejects_empty_or_overlong_paraphrases():
     assert nodes == {}
 
 
+def test_llm_backend_finds_same_entity_merges_for_adjacent_nodes():
+    graph = nx.DiGraph()
+    graph.add_node("entity", label="Entity", paraphrase="the bird")
+    graph.add_node("animal", label="Animal", paraphrase="the goose")
+    graph.add_edge("animal", "entity", relation_id="is_a", label="is a")
+    client = FakeClient(
+        {
+            "merges": [
+                {
+                    "pair_id": "pair_0",
+                    "node_a_id": "animal",
+                    "node_b_id": "entity",
+                    "same_entity": True,
+                    "keep_node_id": "animal",
+                }
+            ]
+        }
+    )
+    backend = OpenAIGroundingBackend(client=client)
+
+    merges = backend.find_semantic_merges(
+        "A goose walked by.",
+        graph,
+        {
+            "entity": ConceptDescription("Entity", "Something that exists."),
+            "animal": ConceptDescription("Animal", "A living organism."),
+        },
+    )
+
+    assert merges == [("animal", "entity", "animal")]
+    assert client.responses.kwargs["text"]["format"]["name"] == "semantic_graph_merges"
+    prompt = client.responses.kwargs["input"][1]["content"]
+    assert 'node_a_id="animal"' in prompt
+    assert "same story referent" in client.responses.kwargs["input"][0]["content"]
+
+
 def test_llm_backend_requires_system_api_key(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     backend = OpenAIGroundingBackend()
