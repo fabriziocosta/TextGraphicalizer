@@ -22,6 +22,7 @@ from .laya_backend import LayaBackend
 from .llm_backend import (
     DEFAULT_OLLAMA_BASE_URL,
     DEFAULT_OLLAMA_LLM_MODEL,
+    DEFAULT_OLLAMA_TIMEOUT,
     DEFAULT_OPENAI_LLM_MODEL,
     OllamaGroundingBackend,
     OpenAIGroundingBackend,
@@ -100,6 +101,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         llm_provider: str = "openai",
         llm_model: str | None = None,
         ollama_base_url: str = DEFAULT_OLLAMA_BASE_URL,
+        ollama_timeout: float = DEFAULT_OLLAMA_TIMEOUT,
     ) -> None:
         self.ontology = ontology
         self.model_id = model_id
@@ -117,6 +119,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         self.llm_provider = llm_provider
         self.llm_model = llm_model
         self.ollama_base_url = ollama_base_url
+        self.ollama_timeout = ollama_timeout
         self.load_model()
 
     def _load_configuration(self) -> None:
@@ -153,6 +156,12 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                 raise TypeError("llm_model must be a non-empty string or None")
         if not isinstance(self.ollama_base_url, str) or not self.ollama_base_url:
             raise TypeError("ollama_base_url must be a non-empty string")
+        if not isinstance(self.ollama_timeout, (int, float)) or isinstance(
+            self.ollama_timeout, bool
+        ):
+            raise TypeError("ollama_timeout must be a positive number")
+        if self.ollama_timeout <= 0:
+            raise ValueError("ollama_timeout must be positive")
         effective_llm_model = self._effective_llm_model()
         if self.llm_provider == "openai" and not effective_llm_model.startswith(
             ("gpt-", "o1", "o3", "o4", "chatgpt-")
@@ -234,6 +243,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                 grounding_backend = OllamaGroundingBackend(
                     model_id=self._effective_llm_model(),
                     base_url=self.ollama_base_url,
+                    timeout=self.ollama_timeout,
                 ).load()
             else:
                 grounding_backend = OpenAIGroundingBackend(

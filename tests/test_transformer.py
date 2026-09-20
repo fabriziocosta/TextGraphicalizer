@@ -203,7 +203,7 @@ def test_use_llm_selects_ollama_with_local_default_model(monkeypatch):
     loaded = []
 
     def load_ollama(self):
-        loaded.append((self.model_id, self.base_url))
+        loaded.append((self.model_id, self.base_url, self.timeout))
         return FakeLlmBackend()
 
     monkeypatch.setattr(
@@ -218,7 +218,7 @@ def test_use_llm_selects_ollama_with_local_default_model(monkeypatch):
     estimator = TextGraphicalizer(ONTOLOGY, use_llm=True, llm_provider="ollama")
     graph = estimator.transform("A causes B.")
 
-    assert loaded == [("gemma4:12b-mlx", "http://localhost:11434")]
+    assert loaded == [("gemma4:12b-mlx", "http://localhost:11434", 600.0)]
     assert graph.graph["grounding_method"] == "ollama_llm_graph_assignment"
     assert graph.graph["llm_provider"] == "ollama"
     assert graph.graph["grounding_model_id"] == "gemma4:12b-mlx"

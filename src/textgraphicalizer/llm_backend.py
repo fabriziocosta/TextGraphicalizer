@@ -15,6 +15,7 @@ _WORD_RE = re.compile(r"[A-Za-z]+(?:['’][A-Za-z]+)?")
 DEFAULT_OPENAI_LLM_MODEL = "gpt-4.1-mini"
 DEFAULT_OLLAMA_LLM_MODEL = "gemma4:12b-mlx"
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
+DEFAULT_OLLAMA_TIMEOUT = 600.0
 
 GROUNDING_RESPONSE_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -615,7 +616,7 @@ class OllamaGroundingBackend(OpenAIGroundingBackend):
         self,
         model_id: str = DEFAULT_OLLAMA_LLM_MODEL,
         base_url: str = DEFAULT_OLLAMA_BASE_URL,
-        timeout: float = 120.0,
+        timeout: float = DEFAULT_OLLAMA_TIMEOUT,
         client: Any | None = None,
     ) -> None:
         # ``client`` is retained as a small testing/integration escape hatch;
@@ -628,6 +629,8 @@ class OllamaGroundingBackend(OpenAIGroundingBackend):
         """Validate the endpoint configuration without starting a server."""
         if not self.base_url:
             raise ValueError("Ollama base_url must be a non-empty URL")
+        if self.timeout <= 0:
+            raise ValueError("Ollama timeout must be positive")
         return self
 
     def _structured_completion(
@@ -645,6 +648,10 @@ class OllamaGroundingBackend(OpenAIGroundingBackend):
                 {"role": "user", "content": user_prompt},
             ],
             "stream": False,
+            # Gemma 4 advertises thinking support. The graph task needs the
+            # constrained JSON answer, not a separate reasoning trace; leaving
+            # thinking enabled can make a local 12B request exceed its timeout.
+            "think": False,
             "format": schema,
         }
         request = Request(
@@ -660,6 +667,12 @@ class OllamaGroundingBackend(OpenAIGroundingBackend):
             raise RuntimeError(
                 f"Ollama request failed with HTTP {exc.code} at {self.base_url}; "
                 f"check that model {self.model_id!r} is available"
+            ) from exc
+        except TimeoutError as exc:
+            raise RuntimeError(
+                f"Ollama did not finish the request within {self.timeout:g} seconds "
+                f"at {self.base_url}. The model may still be loading; increase "
+                "ollama_timeout or use a smaller model."
             ) from exc
         except (URLError, OSError) as exc:
             raise RuntimeError(

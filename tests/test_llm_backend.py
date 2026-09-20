@@ -294,5 +294,6 @@ def test_ollama_backend_uses_local_chat_api_and_json_schema(monkeypatch):
     assert request.full_url == "http://localhost:11434/api/chat"
     assert request_payload["model"] == DEFAULT_OLLAMA_LLM_MODEL
     assert request_payload["stream"] is False
+    assert request_payload["think"] is False
     assert request_payload["format"]["type"] == "object"
-    assert timeout == 120.0
+    assert timeout == 600.0

@@ -49,10 +49,13 @@ extractor = TextGraphicalizer(
 ```
 
 Set `llm_model` to override either provider's default, or set
-`ollama_base_url` for another Ollama endpoint. The backend asks for a concise,
-context-sensitive paraphrase for each selected concept and relation. These LLM
-paraphrases are allowed to express implicit concepts and are stored as
-`paraphrase`; unlike cross-encoder spans, they do not have document offsets.
+`ollama_base_url` for another Ollama endpoint. Local requests allow up to ten
+minutes by default because a 12B model may need time to load; set
+`ollama_timeout` to change that limit. Thinking output is disabled so the
+structured graph response is returned directly. The backend asks for a
+concise, context-sensitive paraphrase for each selected concept and relation.
+These LLM paraphrases are allowed to express implicit concepts and are stored
+as `paraphrase`; unlike cross-encoder spans, they do not have document offsets.
 
 By default, graph selection uses the MILP optimizer. Set `use_milp=False` to
 select nodes with `node_threshold` and edges with `edge_threshold` directly;

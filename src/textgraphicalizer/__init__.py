@@ -17,6 +17,7 @@ from .errors import (
 from .llm_backend import (
     DEFAULT_OLLAMA_BASE_URL,
     DEFAULT_OLLAMA_LLM_MODEL,
+    DEFAULT_OLLAMA_TIMEOUT,
     DEFAULT_OPENAI_LLM_MODEL,
     OllamaGroundingBackend,
     OpenAIGroundingBackend,
@@ -33,6 +34,7 @@ __all__ = [
     "DEFAULT_AESOP_CACHE_PATH",
     "DEFAULT_OLLAMA_BASE_URL",
     "DEFAULT_OLLAMA_LLM_MODEL",
+    "DEFAULT_OLLAMA_TIMEOUT",
     "DEFAULT_OPENAI_LLM_MODEL",
     "GraphOptimizationError",
     "LayaBackendError",
