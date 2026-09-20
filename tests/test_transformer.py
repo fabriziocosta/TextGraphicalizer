@@ -224,6 +224,140 @@ def test_use_llm_selects_ollama_with_local_default_model(monkeypatch):
     assert graph.graph["grounding_model_id"] == "gemma4:12b-mlx"
 
 
+def test_use_llm_selects_mlx_lm_and_reports_provider_metadata(monkeypatch):
+    monkeypatch.setattr(
+        "textgraphicalizer.transformer.LayaBackend.load",
+        lambda self: FakeBackend(),
+    )
+    loaded = []
+
+    class FakeLlmBackend:
+        def ground_graph(self, text, graph, concepts, edges):
+            del text, graph, concepts, edges
+            return {}, {}
+
+    def load_mlx(self):
+        loaded.append(self)
+        return FakeLlmBackend()
+
+    monkeypatch.setattr(
+        "textgraphicalizer.transformer.MlxLmGroundingBackend.load",
+        load_mlx,
+    )
+    monkeypatch.setattr(
+        "textgraphicalizer.transformer.SpanGroundingBackend.load",
+        lambda self: pytest.fail("cross-encoder should not load in LLM mode"),
+    )
+
+    estimator = TextGraphicalizer(
+        ONTOLOGY,
+        use_llm=True,
+        llm_provider="mlx-lm",
+        llm_model="GLM-4.7-Flash-4bit",
+        mlx_lm_base_url="http://127.0.0.1:8080/v1",
+    )
+    graph = estimator.transform("A causes B.")
+
+    assert len(loaded) == 1
+    assert loaded[0].model_id == "GLM-4.7-Flash-4bit"
+    assert loaded[0].base_url == "http://127.0.0.1:8080/v1"
+    assert graph.graph["llm_provider"] == "mlx-lm"
+    assert graph.graph["grounding_model_id"] == "GLM-4.7-Flash-4bit"
+    assert graph.graph["llm_provider_config"]["model_path"]
+
+
+def test_llm_yaml_configuration_is_authoritative(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "textgraphicalizer.transformer.LayaBackend.load",
+        lambda self: FakeBackend(),
+    )
+    config_path = tmp_path / "llm.yaml"
+    config_path.write_text(
+        """version: 1
+providers:
+  mlx-lm:
+    model: yaml-model
+    base_url: http://yaml-server/v1
+    timeout: 12
+    temperature: 0.25
+    max_tokens: 64
+    model_path: /yaml/model
+    python_executable: /yaml/python
+    auto_start: false
+    server:
+      host: 127.0.0.2
+      port: 9090
+      log_level: DEBUG
+""",
+        encoding="utf-8",
+    )
+    loaded = []
+
+    class FakeLlmBackend:
+        def ground_graph(self, text, graph, concepts, edges):
+            del text, graph, concepts, edges
+            return {}, {}
+
+    def load_mlx(self):
+        loaded.append(self)
+        return FakeLlmBackend()
+
+    monkeypatch.setattr(
+        "textgraphicalizer.transformer.MlxLmGroundingBackend.load",
+        load_mlx,
+    )
+    estimator = TextGraphicalizer(
+        ONTOLOGY,
+        use_llm=True,
+        llm_provider="mlx-lm",
+        llm_model="constructor-model",
+        mlx_lm_base_url="http://constructor/v1",
+        llm_config_path=config_path,
+    )
+    estimator.transform("A causes B.")
+
+    assert loaded[0].model_id == "yaml-model"
+    assert loaded[0].base_url == "http://yaml-server/v1"
+    assert loaded[0].timeout == 12.0
+    assert loaded[0].temperature == 0.25
+    assert loaded[0].max_tokens == 64
+    assert loaded[0].model_path == "/yaml/model"
+    assert loaded[0].python_executable == "/yaml/python"
+    assert loaded[0].server_host == "127.0.0.2"
+    assert loaded[0].server_port == 9090
+
+
+def test_transform_refreshes_mlx_backend_when_base_url_changes(monkeypatch):
+    monkeypatch.setattr(
+        "textgraphicalizer.transformer.LayaBackend.load",
+        lambda self: FakeBackend(),
+    )
+    class FakeLlmBackend:
+        def __init__(self, base_url):
+            self.base_url = base_url
+
+        def ground_graph(self, text, graph, concepts, edges):
+            del text, graph, concepts, edges
+            return {}, {}
+
+    monkeypatch.setattr(
+        "textgraphicalizer.transformer.MlxLmGroundingBackend.load",
+        lambda self: FakeLlmBackend(self.base_url),
+    )
+    estimator = TextGraphicalizer(
+        ONTOLOGY,
+        use_llm=True,
+        llm_provider="mlx-lm",
+        mlx_lm_auto_start=False,
+    )
+    first_backend = estimator.grounding_backend_
+    estimator.mlx_lm_base_url = "http://127.0.0.1:9090/v1"
+    estimator.transform("A causes B.")
+
+    assert estimator.grounding_backend_ is not first_backend
+    assert estimator.grounding_backend_.base_url == "http://127.0.0.1:9090/v1"
+
+
 def test_transform_refreshes_grounding_backend_when_use_llm_changes(monkeypatch):
     monkeypatch.setattr(
         "textgraphicalizer.transformer.LayaBackend.load",

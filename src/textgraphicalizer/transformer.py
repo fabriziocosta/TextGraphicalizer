@@ -20,12 +20,30 @@ from sklearn.utils.validation import check_is_fitted
 
 from .laya_backend import LayaBackend
 from .llm_backend import (
+    DEFAULT_MLX_LM_BASE_URL,
+    DEFAULT_MLX_LM_MAX_TOKENS,
+    DEFAULT_MLX_LM_MODEL,
+    DEFAULT_MLX_LM_MODEL_PATH,
+    DEFAULT_MLX_LM_PYTHON,
+    DEFAULT_MLX_LM_SERVER_HOST,
+    DEFAULT_MLX_LM_SERVER_LOG_LEVEL,
+    DEFAULT_MLX_LM_SERVER_PORT,
+    DEFAULT_MLX_LM_TEMPERATURE,
+    DEFAULT_MLX_LM_TIMEOUT,
     DEFAULT_OLLAMA_BASE_URL,
     DEFAULT_OLLAMA_LLM_MODEL,
     DEFAULT_OLLAMA_TIMEOUT,
     DEFAULT_OPENAI_LLM_MODEL,
+    MlxLmGroundingBackend,
     OllamaGroundingBackend,
     OpenAIGroundingBackend,
+)
+from .llm_config import (
+    SUPPORTED_LLM_PROVIDERS,
+    LLMConfig,
+    config_fingerprint,
+    default_provider_settings,
+    load_llm_config,
 )
 from .ontology import Ontology, load_ontology
 from .optimizer import EdgeEvidence, NodeEvidence, select_graph, select_graph_by_threshold
@@ -100,8 +118,19 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         use_llm: bool = False,
         llm_provider: str = "openai",
         llm_model: str | None = None,
+        llm_config_path: str | Path | None = None,
         ollama_base_url: str = DEFAULT_OLLAMA_BASE_URL,
         ollama_timeout: float = DEFAULT_OLLAMA_TIMEOUT,
+        mlx_lm_base_url: str = DEFAULT_MLX_LM_BASE_URL,
+        mlx_lm_timeout: float = DEFAULT_MLX_LM_TIMEOUT,
+        mlx_lm_temperature: float = DEFAULT_MLX_LM_TEMPERATURE,
+        mlx_lm_max_tokens: int = DEFAULT_MLX_LM_MAX_TOKENS,
+        mlx_lm_model_path: str | Path = DEFAULT_MLX_LM_MODEL_PATH,
+        mlx_lm_python: str = DEFAULT_MLX_LM_PYTHON,
+        mlx_lm_server_host: str = DEFAULT_MLX_LM_SERVER_HOST,
+        mlx_lm_server_port: int = DEFAULT_MLX_LM_SERVER_PORT,
+        mlx_lm_server_log_level: str = DEFAULT_MLX_LM_SERVER_LOG_LEVEL,
+        mlx_lm_auto_start: bool = True,
     ) -> None:
         self.ontology = ontology
         self.model_id = model_id
@@ -118,9 +147,46 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         self.use_llm = use_llm
         self.llm_provider = llm_provider
         self.llm_model = llm_model
+        self.llm_config_path = llm_config_path
         self.ollama_base_url = ollama_base_url
         self.ollama_timeout = ollama_timeout
+        self.mlx_lm_base_url = mlx_lm_base_url
+        self.mlx_lm_timeout = mlx_lm_timeout
+        self.mlx_lm_temperature = mlx_lm_temperature
+        self.mlx_lm_max_tokens = mlx_lm_max_tokens
+        self.mlx_lm_model_path = mlx_lm_model_path
+        self.mlx_lm_python = mlx_lm_python
+        self.mlx_lm_server_host = mlx_lm_server_host
+        self.mlx_lm_server_port = mlx_lm_server_port
+        self.mlx_lm_server_log_level = mlx_lm_server_log_level
+        self.mlx_lm_auto_start = mlx_lm_auto_start
         self.load_model()
+
+    def _ensure_llm_config(self) -> None:
+        if self.llm_config_path is None:
+            self._llm_config_ = None
+            return
+        config = load_llm_config(self.llm_config_path)
+        if getattr(self, "_llm_config_", None) is None or (
+            getattr(self._llm_config_, "fingerprint", None) != config.fingerprint
+            or getattr(self._llm_config_, "source_path", None) != config.source_path
+        ):
+            self._llm_config_ = config
+
+    def _yaml_provider_settings(self) -> Mapping[str, Any] | None:
+        config: LLMConfig | None = getattr(self, "_llm_config_", None)
+        if config is None:
+            return None
+        defaults = default_provider_settings(self.llm_provider)
+        return {**defaults, **dict(config.provider(self.llm_provider))}
+
+    def _provider_setting(self, name: str, default: Any) -> Any:
+        settings = self._yaml_provider_settings()
+        if settings is None:
+            return default
+        if name in settings:
+            return settings[name]
+        return default_provider_settings(self.llm_provider).get(name, default)
 
     def _load_configuration(self) -> None:
         """Load the ontology and stopwords configured on the estimator."""
@@ -145,23 +211,41 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             self._load_configuration()
 
     def _validate_parameters(self) -> None:
+        self._ensure_llm_config()
         if not isinstance(self.grounding_model_id, str) or not self.grounding_model_id:
             raise TypeError("grounding_model_id must be a non-empty string")
         if not isinstance(self.use_llm, bool):
             raise TypeError("use_llm must be a bool")
-        if self.llm_provider not in {"openai", "ollama"}:
-            raise ValueError("llm_provider must be either 'openai' or 'ollama'")
+        if self.llm_provider not in SUPPORTED_LLM_PROVIDERS:
+            raise ValueError("llm_provider must be one of: openai, ollama, mlx-lm")
         if self.llm_model is not None:
             if not isinstance(self.llm_model, str) or not self.llm_model:
                 raise TypeError("llm_model must be a non-empty string or None")
-        if not isinstance(self.ollama_base_url, str) or not self.ollama_base_url:
+        ollama_base_url = self._effective_ollama_base_url()
+        if not isinstance(ollama_base_url, str) or not ollama_base_url:
             raise TypeError("ollama_base_url must be a non-empty string")
-        if not isinstance(self.ollama_timeout, (int, float)) or isinstance(
-            self.ollama_timeout, bool
-        ):
-            raise TypeError("ollama_timeout must be a positive number")
-        if self.ollama_timeout <= 0:
+        ollama_timeout = self._effective_ollama_timeout()
+        if ollama_timeout <= 0:
             raise ValueError("ollama_timeout must be positive")
+        mlx = self._effective_mlx_settings()
+        if not mlx["base_url"]:
+            raise TypeError("mlx_lm_base_url must be a non-empty string")
+        if mlx["timeout"] <= 0:
+            raise ValueError("mlx_lm_timeout must be a positive number")
+        if not 0.0 <= mlx["temperature"] <= 2.0:
+            raise ValueError("mlx_lm_temperature must be between 0 and 2")
+        if not 1 <= mlx["max_tokens"] <= 32768:
+            raise ValueError("mlx_lm_max_tokens must be between 1 and 32768")
+        if not mlx["model_path"]:
+            raise TypeError("mlx_lm_model_path must be a non-empty path")
+        if not mlx["python_executable"]:
+            raise TypeError("mlx_lm_python must be a non-empty path")
+        if not mlx["server_host"]:
+            raise TypeError("mlx_lm_server_host must be a non-empty string")
+        if not 1 <= mlx["server_port"] <= 65535:
+            raise ValueError("mlx_lm_server_port must be between 1 and 65535")
+        if not mlx["server_log_level"]:
+            raise TypeError("mlx_lm_server_log_level must be a non-empty string")
         effective_llm_model = self._effective_llm_model()
         if self.llm_provider == "openai" and not effective_llm_model.startswith(
             ("gpt-", "o1", "o3", "o4", "chatgpt-")
@@ -218,20 +302,114 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         return self
 
     def _effective_llm_model(self) -> str:
+        settings = self._yaml_provider_settings()
+        if settings is not None:
+            configured_model = settings.get("model")
+            if configured_model is not None:
+                return str(configured_model)
+            return str(default_provider_settings(self.llm_provider)["model"])
         if self.llm_model is not None:
             return self.llm_model
         if self.llm_provider == "ollama":
             return DEFAULT_OLLAMA_LLM_MODEL
+        if self.llm_provider == "mlx-lm":
+            return DEFAULT_MLX_LM_MODEL
         return DEFAULT_OPENAI_LLM_MODEL
+
+    def _effective_ollama_base_url(self) -> str:
+        return str(self._provider_setting("base_url", self.ollama_base_url))
+
+    def _effective_ollama_timeout(self) -> float:
+        return float(self._provider_setting("timeout", self.ollama_timeout))
+
+    def _effective_mlx_settings(self) -> dict[str, Any]:
+        settings = self._yaml_provider_settings()
+        server = settings.get("server", {}) if settings is not None else {}
+        if not isinstance(server, Mapping):
+            server = {}
+        return {
+            "base_url": str(self._provider_setting("base_url", self.mlx_lm_base_url)),
+            "timeout": float(self._provider_setting("timeout", self.mlx_lm_timeout)),
+            "temperature": float(
+                self._provider_setting("temperature", self.mlx_lm_temperature)
+            ),
+            "max_tokens": int(self._provider_setting("max_tokens", self.mlx_lm_max_tokens)),
+            "model_path": str(
+                self._provider_setting("model_path", self.mlx_lm_model_path)
+            ),
+            "python_executable": str(
+                self._provider_setting("python_executable", self.mlx_lm_python)
+            ),
+            "server_host": str(server.get("host", self.mlx_lm_server_host)),
+            "server_port": int(server.get("port", self.mlx_lm_server_port)),
+            "server_log_level": str(
+                server.get("log_level", self.mlx_lm_server_log_level)
+            ),
+            "auto_start": bool(
+                self._provider_setting("auto_start", self.mlx_lm_auto_start)
+            ),
+        }
+
+    def _effective_provider_config(self) -> dict[str, Any]:
+        settings = self._yaml_provider_settings()
+        if settings is not None:
+            return dict(settings)
+        if self.llm_provider == "ollama":
+            return {
+                "model": self._effective_llm_model(),
+                "base_url": self._effective_ollama_base_url(),
+                "timeout": self._effective_ollama_timeout(),
+            }
+        if self.llm_provider == "mlx-lm":
+            mlx = self._effective_mlx_settings()
+            return {
+                "model": self._effective_llm_model(),
+                "base_url": mlx["base_url"],
+                "timeout": mlx["timeout"],
+                "temperature": mlx["temperature"],
+                "max_tokens": mlx["max_tokens"],
+                "model_path": mlx["model_path"],
+                "python_executable": mlx["python_executable"],
+                "auto_start": mlx["auto_start"],
+                "server": {
+                    "host": mlx["server_host"],
+                    "port": mlx["server_port"],
+                    "log_level": mlx["server_log_level"],
+                },
+            }
+        return {"model": self._effective_llm_model()}
 
     def _grounding_signature(self) -> tuple[Any, ...]:
         """Return the settings that determine the active grounding backend."""
         if self.use_llm:
+            endpoint = None
+            timeout: float | None = None
+            generation: tuple[Any, ...] = ()
+            if self.llm_provider == "ollama":
+                endpoint = self._effective_ollama_base_url()
+                timeout = self._effective_ollama_timeout()
+            elif self.llm_provider == "mlx-lm":
+                mlx = self._effective_mlx_settings()
+                endpoint = mlx["base_url"]
+                timeout = mlx["timeout"]
+                generation = (
+                    mlx["temperature"],
+                    mlx["max_tokens"],
+                    mlx["model_path"],
+                    mlx["python_executable"],
+                    mlx["server_host"],
+                    mlx["server_port"],
+                    mlx["server_log_level"],
+                    mlx["auto_start"],
+                )
             return (
                 True,
                 self.llm_provider,
                 self._effective_llm_model(),
-                self.ollama_base_url,
+                endpoint,
+                timeout,
+                generation,
+                config_fingerprint(getattr(self, "_llm_config_", None)),
             )
         return False, self.grounding_model_id, self.device
 
@@ -242,12 +420,22 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             if self.llm_provider == "ollama":
                 grounding_backend = OllamaGroundingBackend(
                     model_id=self._effective_llm_model(),
-                    base_url=self.ollama_base_url,
-                    timeout=self.ollama_timeout,
+                    base_url=self._effective_ollama_base_url(),
+                    timeout=self._effective_ollama_timeout(),
+                ).load()
+            elif self.llm_provider == "mlx-lm":
+                mlx = self._effective_mlx_settings()
+                grounding_backend = MlxLmGroundingBackend(
+                    model_id=self._effective_llm_model(),
+                    provider_config=self._effective_provider_config(),
+                    **mlx,
                 ).load()
             else:
+                settings = self._yaml_provider_settings() or {}
                 grounding_backend = OpenAIGroundingBackend(
                     model_id=self._effective_llm_model(),
+                    api_key_env=str(settings.get("api_key_env", "OPENAI_API_KEY")),
+                    provider_config=self._effective_provider_config(),
                 ).load()
         else:
             grounding_backend = SpanGroundingBackend(
@@ -1298,6 +1486,14 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                     )
                 ),
                 "llm_provider": self.llm_provider if self.use_llm else None,
+                "llm_config_path": (
+                    str(self.llm_config_path)
+                    if self.use_llm and self.llm_config_path is not None
+                    else None
+                ),
+                "llm_provider_config": (
+                    self._effective_provider_config() if self.use_llm else None
+                ),
                 "grounding_model_id": (
                     self._effective_llm_model() if self.use_llm else self.grounding_model_id
                 ),

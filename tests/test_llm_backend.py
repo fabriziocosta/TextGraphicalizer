@@ -1,9 +1,16 @@
 import json
+from urllib.error import URLError
 
 import networkx as nx
 
 from textgraphicalizer.llm_backend import (
+    DEFAULT_MLX_LM_BASE_URL,
+    DEFAULT_MLX_LM_MAX_TOKENS,
+    DEFAULT_MLX_LM_MODEL,
+    DEFAULT_MLX_LM_MODEL_PATH,
+    DEFAULT_MLX_LM_PYTHON,
     DEFAULT_OLLAMA_LLM_MODEL,
+    MlxLmGroundingBackend,
     OllamaGroundingBackend,
     OpenAIGroundingBackend,
 )
@@ -297,3 +304,137 @@ def test_ollama_backend_uses_local_chat_api_and_json_schema(monkeypatch):
     assert request_payload["think"] is False
     assert request_payload["format"]["type"] == "object"
     assert timeout == 600.0
+
+
+def test_mlx_lm_backend_uses_chat_completions_and_explicit_schema_prompt(monkeypatch):
+    class FakeHttpResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+        def read(self):
+            return json.dumps(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": "```json\n{\"ok\": true}\n```",
+                                "reasoning": "ignored",
+                            }
+                        }
+                    ]
+                }
+            ).encode("utf-8")
+
+    requests = []
+
+    def fake_urlopen(request, timeout):
+        requests.append((request, timeout))
+        return FakeHttpResponse()
+
+    monkeypatch.setattr("textgraphicalizer.llm_backend.urlopen", fake_urlopen)
+    backend = MlxLmGroundingBackend(auto_start=False)
+
+    payload = backend._structured_completion(
+        "system",
+        "user",
+        {"type": "object", "properties": {"ok": {"type": "boolean"}}},
+        "test_schema",
+    )
+
+    assert payload == {"ok": True}
+    request, timeout = requests[0]
+    request_payload = json.loads(request.data.decode("utf-8"))
+    assert request.full_url == f"{DEFAULT_MLX_LM_BASE_URL}/chat/completions"
+    assert request_payload["model"] == DEFAULT_MLX_LM_MODEL
+    assert request_payload["stream"] is False
+    assert request_payload["temperature"] == 0.0
+    assert request_payload["max_tokens"] == DEFAULT_MLX_LM_MAX_TOKENS
+    assert "response_format" not in request_payload
+    assert '"properties"' in request_payload["messages"][0]["content"]
+    assert "Return exactly one valid JSON object" in request_payload["messages"][0]["content"]
+    assert timeout == 600.0
+
+
+def test_mlx_lm_parser_accepts_preamble_and_nested_fenced_json():
+    raw = 'Here is the result:\n```json\n{"items": [{"ok": true}]}\n```'
+    assert MlxLmGroundingBackend._parse_structured_output(raw, "MLX-LM") == {
+        "items": [{"ok": True}]
+    }
+
+
+def test_mlx_lm_backend_reports_missing_content_and_connection_errors(monkeypatch):
+    class MissingContentResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+        def read(self):
+            return b'{"choices": [{"message": {}}]}'
+
+    monkeypatch.setattr(
+        "textgraphicalizer.llm_backend.urlopen",
+        lambda request, timeout: MissingContentResponse(),
+    )
+    backend = MlxLmGroundingBackend(
+        model_id="test-model",
+        base_url="http://test-server/v1",
+        auto_start=False,
+    )
+    try:
+        backend._structured_completion("system", "user", {}, "schema")
+    except ValueError as exc:
+        assert "http://test-server/v1" in str(exc)
+        assert "test-model" in str(exc)
+        assert "message.content" in str(exc)
+    else:
+        raise AssertionError("expected missing content to fail")
+
+    def fail_urlopen(request, timeout):
+        raise URLError("offline")
+
+    monkeypatch.setattr("textgraphicalizer.llm_backend.urlopen", fail_urlopen)
+    try:
+        backend._structured_completion("system", "user", {}, "schema")
+    except RuntimeError as exc:
+        assert "http://test-server/v1" in str(exc)
+        assert "test-model" in str(exc)
+        assert "connect" in str(exc)
+    else:
+        raise AssertionError("expected connection failure")
+
+
+def test_mlx_lm_backend_builds_requested_default_server_command(monkeypatch):
+    commands = []
+
+    class FakeProcess:
+        def poll(self):
+            return None
+
+    monkeypatch.setattr("textgraphicalizer.llm_backend.MlxLmGroundingBackend._server_is_reachable", lambda self: True)
+    monkeypatch.setattr(
+        "textgraphicalizer.llm_backend.subprocess.Popen",
+        lambda command: commands.append(command) or FakeProcess(),
+    )
+    backend = MlxLmGroundingBackend(auto_start=True)
+    assert backend._server_command() == [
+        DEFAULT_MLX_LM_PYTHON,
+        "-m",
+        "mlx_lm.server",
+        "--model",
+        DEFAULT_MLX_LM_MODEL_PATH,
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "8080",
+        "--max-tokens",
+        str(DEFAULT_MLX_LM_MAX_TOKENS),
+        "--temp",
+        "0",
+        "--log-level",
+        "INFO",
+    ]

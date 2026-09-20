@@ -1,0 +1,25 @@
+version: 1
+
+providers:
+  openai:
+    model: gpt-4.1-mini
+    api_key_env: OPENAI_API_KEY
+
+  ollama:
+    model: gemma4:12b-mlx
+    base_url: http://localhost:11434
+    timeout: 600
+
+  mlx-lm:
+    model: GLM-4.7-Flash-4bit
+    base_url: http://127.0.0.1:8080/v1
+    timeout: 600
+    temperature: 0.0
+    max_tokens: 128
+    model_path: /Users/f.costa/Documents/Codex/2026-09-19/referenced-chatgpt-conversation-this-is-an/models/GLM-4.7-Flash-4bit
+    python_executable: /Users/f.costa/.venvs/py312/bin/python
+    auto_start: true
+    server:
+      host: 127.0.0.1
+      port: 8080
+      log_level: INFO

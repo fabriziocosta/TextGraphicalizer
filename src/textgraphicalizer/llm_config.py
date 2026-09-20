@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import hashlib
-import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
-from collections.abc import Mapping
 
 import yaml
 
@@ -23,11 +22,20 @@ _DEFAULTS: dict[str, dict[str, Any]] = {
         "timeout": 600.0,
     },
     "mlx-lm": {
-        "model": "local-model",
+        "model": "GLM-4.7-Flash-4bit",
         "base_url": "http://127.0.0.1:8080/v1",
         "timeout": 600.0,
         "temperature": 0.0,
-        "max_tokens": 2048,
+        "max_tokens": 128,
+        "model_path": (
+            "/Users/f.costa/Documents/Codex/2026-09-19/"
+            "referenced-chatgpt-conversation-this-is-an/models/GLM-4.7-Flash-4bit"
+        ),
+        "server": {
+            "host": "127.0.0.1",
+            "port": 8080,
+            "log_level": "INFO",
+        },
     },
 }
 
@@ -43,6 +51,8 @@ _ALLOWED_FIELDS = frozenset(
         "weights_path",
         "server",
         "metadata",
+        "auto_start",
+        "python_executable",
     }
 )
 
@@ -114,17 +124,38 @@ def _validate_provider(name: str, raw: Any, path: Path) -> dict[str, Any]:
             if not isinstance(value, Mapping):
                 raise _error(path, field_name, "must be a mapping")
             server = dict(value)
+            unknown_server = set(server) - {
+                "host",
+                "port",
+                "log_level",
+            }
+            if unknown_server:
+                raise _error(
+                    path,
+                    field_name,
+                    f"contains unsupported fields: {sorted(str(item) for item in unknown_server)}",
+                )
             if "host" in server:
                 server["host"] = _validate_text(server["host"], path, f"{field_name}.host")
             if "port" in server:
                 port = server["port"]
                 if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
                     raise _error(path, f"{field_name}.port", "must be an integer from 1 to 65535")
+            if "log_level" in server:
+                server["log_level"] = _validate_text(
+                    server["log_level"], path, f"{field_name}.log_level"
+                )
             result[field] = server
         elif field == "metadata":
             if not isinstance(value, Mapping):
                 raise _error(path, field_name, "must be a mapping")
             result[field] = dict(value)
+        elif field == "auto_start":
+            if not isinstance(value, bool):
+                raise _error(path, field_name, "must be a boolean")
+            result[field] = value
+        elif field == "python_executable":
+            result[field] = _validate_text(value, path, field_name)
 
     return result
 
@@ -183,10 +214,4 @@ def config_fingerprint(config: LLMConfig | None) -> str | None:
     """Return a stable fingerprint suitable for estimator cache signatures."""
     if config is None:
         return None
-    # Keep this helper intentionally JSON-based for callers that construct an
-    # equivalent configuration object in tests.
-    try:
-        json.dumps(config.providers)
-    except TypeError:
-        return config.fingerprint
     return config.fingerprint

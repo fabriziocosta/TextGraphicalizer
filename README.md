@@ -57,6 +57,65 @@ concise, context-sensitive paraphrase for each selected concept and relation.
 These LLM paraphrases are allowed to express implicit concepts and are stored
 as `paraphrase`; unlike cross-encoder spans, they do not have document offsets.
 
+Provider settings can also be kept in a versioned YAML file. When
+`llm_config_path` is provided, the selected provider's YAML section is
+authoritative over the individual provider constructor arguments:
+
+```yaml
+version: 1
+providers:
+  openai:
+    model: gpt-4.1-mini
+    api_key_env: OPENAI_API_KEY
+  ollama:
+    model: gemma4:12b-mlx
+    base_url: http://localhost:11434
+    timeout: 600
+  mlx-lm:
+    model: GLM-4.7-Flash-4bit
+    base_url: http://127.0.0.1:8080/v1
+    timeout: 600
+    temperature: 0.0
+    max_tokens: 128
+    model_path: /path/to/mlx-model
+    server:
+      host: 127.0.0.1
+      port: 8080
+      log_level: INFO
+```
+
+MLX-LM uses the Chat Completions API at `/v1/chat/completions`; it does not
+use the OpenAI Responses API or depend on `response_format` JSON-schema
+enforcement. Selecting `llm_provider="mlx-lm"` automatically starts the
+external server using the configured model path and server settings. The
+default checked-in configuration is [`llm_config.yaml`](llm_config.yaml),
+which uses this local command:
+
+```bash
+source /Users/f.costa/.venvs/py312/bin/activate
+mlx_lm.server \
+  --model /Users/f.costa/Documents/Codex/2026-09-19/referenced-chatgpt-conversation-this-is-an/models/GLM-4.7-Flash-4bit \
+  --host 127.0.0.1 \
+  --port 8080 \
+  --max-tokens 128 \
+  --temp 0 \
+  --log-level INFO
+```
+
+Use it from Python or the notebook with:
+
+```python
+extractor = TextGraphicalizer(
+    ontology="ontology.yaml",
+    use_llm=True,
+    llm_provider="mlx-lm",
+    llm_config_path="llm_config.yaml",
+)
+```
+
+`model_path` and `server` are launch metadata; TextGraphicalizer communicates
+with MLX-LM over HTTP and does not load MLX weights in-process.
+
 By default, graph selection uses the MILP optimizer. Set `use_milp=False` to
 select nodes with `node_threshold` and edges with `edge_threshold` directly;
 in that mode, `connected` and `max_node_degree` are ignored.

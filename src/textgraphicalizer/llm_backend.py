@@ -6,7 +6,6 @@ import json
 import os
 import re
 import subprocess
-import sys
 import time
 from collections.abc import Mapping
 from pathlib import Path
@@ -21,10 +20,10 @@ DEFAULT_OLLAMA_LLM_MODEL = "gemma4:12b-mlx"
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 DEFAULT_OLLAMA_TIMEOUT = 600.0
 DEFAULT_MLX_LM_BASE_URL = "http://127.0.0.1:8080/v1"
-DEFAULT_MLX_LM_MODEL = "local-model"
+DEFAULT_MLX_LM_MODEL = "GLM-4.7-Flash-4bit"
 DEFAULT_MLX_LM_TIMEOUT = 600.0
 DEFAULT_MLX_LM_TEMPERATURE = 0.0
-DEFAULT_MLX_LM_MAX_TOKENS = 2048
+DEFAULT_MLX_LM_MAX_TOKENS = 128
 DEFAULT_MLX_LM_MODEL_PATH = (
     "/Users/f.costa/Documents/Codex/2026-09-19/referenced-chatgpt-conversation-this-is-an/"
     "models/GLM-4.7-Flash-4bit"
@@ -175,7 +174,7 @@ class OpenAIGroundingBackend:
         """Parse JSON objects with optional Markdown fences or short preambles."""
         cleaned = raw_output.strip()
         fenced = re.search(
-            r"```(?:json)?\s*(\{.*?\})\s*```",
+            r"```(?:json)?\s*(.*)\s*```",
             cleaned,
             flags=re.IGNORECASE | re.DOTALL,
         )
@@ -727,3 +726,197 @@ class OllamaGroundingBackend(OpenAIGroundingBackend):
         if not isinstance(raw_output, str) or not raw_output.strip():
             raise ValueError("Ollama response did not contain message.content")
         return self._parse_structured_output(raw_output, "Ollama")
+
+
+_MLX_SERVER_PROCESSES: dict[tuple[str, int], subprocess.Popen[Any]] = {}
+
+
+class MlxLmGroundingBackend(OpenAIGroundingBackend):
+    """Use an MLX-LM OpenAI-compatible Chat Completions server."""
+
+    provider = "mlx-lm"
+
+    def __init__(
+        self,
+        model_id: str = DEFAULT_MLX_LM_MODEL,
+        base_url: str = DEFAULT_MLX_LM_BASE_URL,
+        timeout: float = DEFAULT_MLX_LM_TIMEOUT,
+        temperature: float = DEFAULT_MLX_LM_TEMPERATURE,
+        max_tokens: int = DEFAULT_MLX_LM_MAX_TOKENS,
+        model_path: str | Path = DEFAULT_MLX_LM_MODEL_PATH,
+        python_executable: str = DEFAULT_MLX_LM_PYTHON,
+        server_host: str = DEFAULT_MLX_LM_SERVER_HOST,
+        server_port: int = DEFAULT_MLX_LM_SERVER_PORT,
+        server_log_level: str = DEFAULT_MLX_LM_SERVER_LOG_LEVEL,
+        auto_start: bool = True,
+        provider_config: Mapping[str, Any] | None = None,
+    ) -> None:
+        super().__init__(model_id=model_id, provider_config=provider_config)
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+        self.temperature = temperature
+        self.max_tokens = max_tokens
+        self.model_path = str(model_path)
+        self.python_executable = python_executable
+        self.server_host = server_host
+        self.server_port = server_port
+        self.server_log_level = server_log_level
+        self.auto_start = auto_start
+        self.server_process: subprocess.Popen[Any] | None = None
+
+    def load(self) -> "MlxLmGroundingBackend":
+        """Validate the endpoint and start the configured external server."""
+        if not self.base_url:
+            raise ValueError("MLX-LM base_url must be a non-empty URL")
+        if self.timeout <= 0:
+            raise ValueError("MLX-LM timeout must be positive")
+        if not 0.0 <= self.temperature <= 2.0:
+            raise ValueError("MLX-LM temperature must be between 0 and 2")
+        if not 1 <= self.max_tokens <= 32768:
+            raise ValueError("MLX-LM max_tokens must be between 1 and 32768")
+        if not self.model_path:
+            raise ValueError("MLX-LM model_path must be a non-empty path")
+        if not 1 <= self.server_port <= 65535:
+            raise ValueError("MLX-LM server_port must be between 1 and 65535")
+        if self.auto_start:
+            self._ensure_server()
+        return self
+
+    def _server_key(self) -> tuple[str, int]:
+        return self.server_host, self.server_port
+
+    def _server_is_reachable(self) -> bool:
+        request = Request(f"{self.base_url}/models", method="GET")
+        try:
+            with urlopen(request, timeout=min(self.timeout, 2.0)):
+                return True
+        except HTTPError:
+            # A running server may reject /models while still accepting chat.
+            return True
+        except (URLError, OSError, TimeoutError):
+            return False
+
+    def _server_command(self) -> list[str]:
+        temperature = (
+            str(int(self.temperature))
+            if float(self.temperature).is_integer()
+            else str(self.temperature)
+        )
+        return [
+            self.python_executable,
+            "-m",
+            "mlx_lm.server",
+            "--model",
+            self.model_path,
+            "--host",
+            self.server_host,
+            "--port",
+            str(self.server_port),
+            "--max-tokens",
+            str(self.max_tokens),
+            "--temp",
+            temperature,
+            "--log-level",
+            self.server_log_level,
+        ]
+
+    def _ensure_server(self) -> None:
+        key = self._server_key()
+        existing = _MLX_SERVER_PROCESSES.get(key)
+        if existing is not None and existing.poll() is None:
+            self.server_process = existing
+        elif self._server_is_reachable():
+            return
+        else:
+            command = self._server_command()
+            try:
+                process = subprocess.Popen(command)
+            except OSError as exc:
+                raise RuntimeError(
+                    f"Could not start MLX-LM server for model {self.model_id!r}; "
+                    f"endpoint {self.base_url!r}; command {command!r}: {exc}"
+                ) from exc
+            _MLX_SERVER_PROCESSES[key] = process
+            self.server_process = process
+
+        deadline = time.monotonic() + min(self.timeout, 60.0)
+        while time.monotonic() < deadline:
+            if self._server_is_reachable():
+                return
+            if self.server_process is not None and self.server_process.poll() is not None:
+                break
+            time.sleep(0.25)
+        return_code = self.server_process.poll() if self.server_process is not None else None
+        raise RuntimeError(
+            f"MLX-LM server for model {self.model_id!r} did not become ready at "
+            f"{self.base_url!r}; process return code: {return_code}"
+        )
+
+    def _schema_prompt(
+        self,
+        system_prompt: str,
+        schema: Mapping[str, Any],
+        schema_name: str,
+    ) -> str:
+        return (
+            f"{system_prompt}\n\n"
+            f"Output schema ({schema_name}):\n"
+            f"{json.dumps(schema, indent=2, sort_keys=True)}\n\n"
+            "Return exactly one valid JSON object matching this schema. Do not "
+            "include Markdown fences, explanations, or reasoning in the answer."
+        )
+
+    def _mlx_error(self, message: str) -> str:
+        return f"MLX-LM request for model {self.model_id!r} at {self.base_url!r} {message}"
+
+    def _structured_completion(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        schema: Mapping[str, Any],
+        schema_name: str,
+    ) -> Mapping[str, Any]:
+        payload = {
+            "model": self.model_id,
+            "messages": [
+                {"role": "system", "content": self._schema_prompt(system_prompt, schema, schema_name)},
+                {"role": "user", "content": user_prompt},
+            ],
+            "stream": False,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+        }
+        request = Request(
+            f"{self.base_url}/chat/completions",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=self.timeout) as response:
+                response_payload = json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            raise RuntimeError(self._mlx_error(f"failed with HTTP {exc.code}")) from exc
+        except TimeoutError as exc:
+            raise RuntimeError(
+                self._mlx_error(f"timed out after {self.timeout:g} seconds")
+            ) from exc
+        except (URLError, OSError) as exc:
+            raise RuntimeError(self._mlx_error("could not connect")) from exc
+        except json.JSONDecodeError as exc:
+            raise ValueError(self._mlx_error("returned invalid JSON")) from exc
+
+        if not isinstance(response_payload, Mapping):
+            raise ValueError(self._mlx_error("returned a non-object response"))
+        choices = response_payload.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise ValueError(self._mlx_error("response did not contain choices"))
+        choice = choices[0]
+        message = choice.get("message") if isinstance(choice, Mapping) else None
+        raw_output = message.get("content") if isinstance(message, Mapping) else None
+        if not isinstance(raw_output, str) or not raw_output.strip():
+            raise ValueError(self._mlx_error("response did not contain message.content"))
+        try:
+            return self._parse_structured_output(raw_output, "MLX-LM")
+        except ValueError as exc:
+            raise ValueError(self._mlx_error("returned malformed JSON content")) from exc
