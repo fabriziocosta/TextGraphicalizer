@@ -5,7 +5,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
+import sys
+import time
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -16,6 +20,19 @@ DEFAULT_OPENAI_LLM_MODEL = "gpt-4.1-mini"
 DEFAULT_OLLAMA_LLM_MODEL = "gemma4:12b-mlx"
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 DEFAULT_OLLAMA_TIMEOUT = 600.0
+DEFAULT_MLX_LM_BASE_URL = "http://127.0.0.1:8080/v1"
+DEFAULT_MLX_LM_MODEL = "local-model"
+DEFAULT_MLX_LM_TIMEOUT = 600.0
+DEFAULT_MLX_LM_TEMPERATURE = 0.0
+DEFAULT_MLX_LM_MAX_TOKENS = 2048
+DEFAULT_MLX_LM_MODEL_PATH = (
+    "/Users/f.costa/Documents/Codex/2026-09-19/referenced-chatgpt-conversation-this-is-an/"
+    "models/GLM-4.7-Flash-4bit"
+)
+DEFAULT_MLX_LM_PYTHON = "/Users/f.costa/.venvs/py312/bin/python"
+DEFAULT_MLX_LM_SERVER_HOST = "127.0.0.1"
+DEFAULT_MLX_LM_SERVER_PORT = 8080
+DEFAULT_MLX_LM_SERVER_LOG_LEVEL = "INFO"
 
 GROUNDING_RESPONSE_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -126,10 +143,14 @@ class OpenAIGroundingBackend:
         model_id: str = DEFAULT_OPENAI_LLM_MODEL,
         api_key: str | None = None,
         client: Any | None = None,
+        api_key_env: str = "OPENAI_API_KEY",
+        provider_config: Mapping[str, Any] | None = None,
     ) -> None:
         self.model_id = model_id
         self.api_key = api_key
         self.client = client
+        self.api_key_env = api_key_env
+        self.provider_config = dict(provider_config or {})
 
     def load(self) -> "OpenAIGroundingBackend":
         """Create the OpenAI client using ``OPENAI_API_KEY`` when needed."""
@@ -141,24 +162,43 @@ class OpenAIGroundingBackend:
             raise RuntimeError(
                 "LLM grounding requires the openai package to be installed."
             ) from exc
-        api_key = self.api_key or os.environ.get("OPENAI_API_KEY")
+        api_key = self.api_key or os.environ.get(self.api_key_env)
         if not api_key:
             raise RuntimeError(
-                "LLM grounding requires the OPENAI_API_KEY environment variable."
+                f"LLM grounding requires the {self.api_key_env} environment variable."
             )
         self.client = OpenAI(api_key=api_key)
         return self
 
     @staticmethod
     def _parse_structured_output(raw_output: str, provider: str) -> Mapping[str, Any]:
-        """Parse a provider response and tolerate Markdown JSON fences."""
+        """Parse JSON objects with optional Markdown fences or short preambles."""
         cleaned = raw_output.strip()
-        if cleaned.startswith("```") and cleaned.endswith("```"):
-            cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned).strip()
+        fenced = re.search(
+            r"```(?:json)?\s*(\{.*?\})\s*```",
+            cleaned,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if fenced is not None:
+            cleaned = fenced.group(1).strip()
         try:
             payload = json.loads(cleaned)
         except json.JSONDecodeError as exc:
-            raise ValueError(f"{provider} grounding response was not valid JSON") from exc
+            decoder = json.JSONDecoder()
+            payload = None
+            start = cleaned.find("{")
+            while start >= 0:
+                try:
+                    candidate, _ = decoder.raw_decode(cleaned[start:])
+                except json.JSONDecodeError:
+                    start = cleaned.find("{", start + 1)
+                    continue
+                payload = candidate
+                break
+            if payload is None:
+                raise ValueError(
+                    f"{provider} grounding response was not valid JSON"
+                ) from exc
         if not isinstance(payload, Mapping):
             raise ValueError(f"{provider} grounding response must be a JSON object")
         return payload
