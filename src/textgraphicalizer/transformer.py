@@ -21,6 +21,7 @@ from sklearn.utils.validation import check_is_fitted
 from .laya_backend import LayaBackend
 from .llm_backend import (
     DEFAULT_MLX_LM_BASE_URL,
+    DEFAULT_MLX_LM_CHAT_TEMPLATE_KWARGS,
     DEFAULT_MLX_LM_MAX_TOKENS,
     DEFAULT_MLX_LM_MODEL,
     DEFAULT_MLX_LM_MODEL_PATH,
@@ -131,6 +132,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         mlx_lm_server_port: int = DEFAULT_MLX_LM_SERVER_PORT,
         mlx_lm_server_log_level: str = DEFAULT_MLX_LM_SERVER_LOG_LEVEL,
         mlx_lm_auto_start: bool = True,
+        mlx_lm_chat_template_kwargs: Mapping[str, Any] | None = None,
     ) -> None:
         self.ontology = ontology
         self.model_id = model_id
@@ -160,6 +162,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
         self.mlx_lm_server_port = mlx_lm_server_port
         self.mlx_lm_server_log_level = mlx_lm_server_log_level
         self.mlx_lm_auto_start = mlx_lm_auto_start
+        self.mlx_lm_chat_template_kwargs = mlx_lm_chat_template_kwargs
         self.load_model()
 
     def _ensure_llm_config(self) -> None:
@@ -348,6 +351,14 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
             "auto_start": bool(
                 self._provider_setting("auto_start", self.mlx_lm_auto_start)
             ),
+            "chat_template_kwargs": dict(
+                self._provider_setting(
+                    "chat_template_kwargs",
+                    DEFAULT_MLX_LM_CHAT_TEMPLATE_KWARGS
+                    if self.mlx_lm_chat_template_kwargs is None
+                    else self.mlx_lm_chat_template_kwargs,
+                )
+            ),
         }
 
     def _effective_provider_config(self) -> dict[str, Any]:
@@ -371,6 +382,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                 "model_path": mlx["model_path"],
                 "python_executable": mlx["python_executable"],
                 "auto_start": mlx["auto_start"],
+                "chat_template_kwargs": mlx["chat_template_kwargs"],
                 "server": {
                     "host": mlx["server_host"],
                     "port": mlx["server_port"],
@@ -401,6 +413,7 @@ class TextGraphicalizer(BaseEstimator, TransformerMixin):
                     mlx["server_port"],
                     mlx["server_log_level"],
                     mlx["auto_start"],
+                    tuple(sorted(mlx["chat_template_kwargs"].items())),
                 )
             return (
                 True,

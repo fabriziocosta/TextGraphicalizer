@@ -53,6 +53,7 @@ _ALLOWED_FIELDS = frozenset(
         "metadata",
         "auto_start",
         "python_executable",
+        "chat_template_kwargs",
     }
 )
 
@@ -156,6 +157,10 @@ def _validate_provider(name: str, raw: Any, path: Path) -> dict[str, Any]:
             result[field] = value
         elif field == "python_executable":
             result[field] = _validate_text(value, path, field_name)
+        elif field == "chat_template_kwargs":
+            if not isinstance(value, Mapping):
+                raise _error(path, field_name, "must be a mapping")
+            result[field] = dict(value)
 
     return result
 

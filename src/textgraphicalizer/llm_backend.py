@@ -32,6 +32,7 @@ DEFAULT_MLX_LM_PYTHON = "/Users/f.costa/.venvs/py312/bin/python"
 DEFAULT_MLX_LM_SERVER_HOST = "127.0.0.1"
 DEFAULT_MLX_LM_SERVER_PORT = 8080
 DEFAULT_MLX_LM_SERVER_LOG_LEVEL = "INFO"
+DEFAULT_MLX_LM_CHAT_TEMPLATE_KWARGS: dict[str, Any] = {"enable_thinking": False}
 
 GROUNDING_RESPONSE_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -749,6 +750,7 @@ class MlxLmGroundingBackend(OpenAIGroundingBackend):
         server_port: int = DEFAULT_MLX_LM_SERVER_PORT,
         server_log_level: str = DEFAULT_MLX_LM_SERVER_LOG_LEVEL,
         auto_start: bool = True,
+        chat_template_kwargs: Mapping[str, Any] | None = None,
         provider_config: Mapping[str, Any] | None = None,
     ) -> None:
         super().__init__(model_id=model_id, provider_config=provider_config)
@@ -762,6 +764,11 @@ class MlxLmGroundingBackend(OpenAIGroundingBackend):
         self.server_port = server_port
         self.server_log_level = server_log_level
         self.auto_start = auto_start
+        self.chat_template_kwargs = dict(
+            DEFAULT_MLX_LM_CHAT_TEMPLATE_KWARGS
+            if chat_template_kwargs is None
+            else chat_template_kwargs
+        )
         self.server_process: subprocess.Popen[Any] | None = None
 
     def load(self) -> "MlxLmGroundingBackend":
@@ -885,6 +892,7 @@ class MlxLmGroundingBackend(OpenAIGroundingBackend):
             "stream": False,
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
+            "chat_template_kwargs": self.chat_template_kwargs,
         }
         request = Request(
             f"{self.base_url}/chat/completions",
@@ -893,8 +901,18 @@ class MlxLmGroundingBackend(OpenAIGroundingBackend):
             method="POST",
         )
         try:
-            with urlopen(request, timeout=self.timeout) as response:
-                response_payload = json.loads(response.read().decode("utf-8"))
+            response_payload: Any | None = None
+            for attempt in range(3):
+                try:
+                    with urlopen(request, timeout=self.timeout) as response:
+                        response_payload = json.loads(response.read().decode("utf-8"))
+                    break
+                except HTTPError as exc:
+                    if exc.code != 404 or attempt == 2:
+                        raise
+                    time.sleep(0.5)
+            if response_payload is None:
+                raise RuntimeError("MLX-LM returned no response payload")
         except HTTPError as exc:
             raise RuntimeError(self._mlx_error(f"failed with HTTP {exc.code}")) from exc
         except TimeoutError as exc:

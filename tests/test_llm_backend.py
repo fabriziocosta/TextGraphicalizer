@@ -352,6 +352,7 @@ def test_mlx_lm_backend_uses_chat_completions_and_explicit_schema_prompt(monkeyp
     assert request_payload["stream"] is False
     assert request_payload["temperature"] == 0.0
     assert request_payload["max_tokens"] == DEFAULT_MLX_LM_MAX_TOKENS
+    assert request_payload["chat_template_kwargs"] == {"enable_thinking": False}
     assert "response_format" not in request_payload
     assert '"properties"' in request_payload["messages"][0]["content"]
     assert "Return exactly one valid JSON object" in request_payload["messages"][0]["content"]
